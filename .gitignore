@@ -19,7 +19,9 @@ models/
 *.onnx
 
 # Outputs / working audio
-output/
+# Keep the output/ folder in the repo but ignore everything written into it.
+output/*
+!output/.gitkeep
 out/
 *.wav
 *.mp3
