@@ -23,7 +23,7 @@ follows the source (e.g. a 48 kHz WebM yields 48 kHz stems).
 | Preset | Output stems | Strategy |
 |--------|--------------|----------|
 | `vocals` | vocals, instrumental | BS-Roformer ep368 (single fast pass) |
-| `vocals-max` | vocals, instrumental | **Vocals:** max-spectrogram ensemble of Kim Jensen + Kim FT + Fullness (fuller, less "gated"). **Instrumental:** averaged ensemble of BS-Roformer + Inst-V2. 5 passes — the cleanest, most natural 2-stem. |
+| `vocals-max` | vocals, instrumental | **Vocals:** max-spectrogram ensemble of Kim Jensen + Kim FT + Fullness (fuller, less "gated"). **Instrumental:** averaged ensemble of BS-Roformer + Inst-V2 + Bleedless (low vocal residue). 6 passes — the cleanest, most natural 2-stem. |
 | `4stem` | vocals, drums, bass, other | Demucs `htdemucs_ft` (single pass) |
 | `4stem-max` *(default)* | vocals, drums, bass, other | Cascade: ensemble instrumental → Demucs `htdemucs_ft` on the clean instrumental (+ ensemble vocals) |
 | `6stem` | vocals, drums, bass, guitar, piano, other | Demucs `htdemucs_6s` |

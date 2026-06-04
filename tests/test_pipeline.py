@@ -46,6 +46,7 @@ def stub_engines(monkeypatch):
         "kim_ft": {"vocals": 0.6, "other": 0.9},
         "vocal_fullness": {"vocals": 0.5, "other": 0.9},
         "inst_v2": {"instrumental": 0.3, "vocals": 0.9},
+        "inst_bleedless": {"instrumental": 0.2, "vocals": 0.9},
     })
     demucs = FakeEngine("demucs", {
         "htdemucs_ft": {"vocals": 0.0, "drums": 0.2, "bass": 0.4, "other": 0.6},

@@ -53,8 +53,8 @@ PRESETS: dict[str, Preset] = {
         name="vocals-max",
         description=(
             "Best 2-stem: max-spec ensemble of Kim + Kim FT + Fullness for fuller, "
-            "less-gated vocals; dedicated instrumental models (BS-Roformer + "
-            "Inst-V2, averaged) for a clean instrumental. 5 passes."
+            "less-gated vocals; averaged ensemble of BS-Roformer + Inst-V2 + "
+            "Bleedless for a clean, low-residue instrumental. 6 passes."
         ),
         kind="twostem",
         engine="uvr",
@@ -62,7 +62,7 @@ PRESETS: dict[str, Preset] = {
         ensemble_method="average",          # instrumental: average (kept clean)
         vocal_method="max_spec",            # vocals: max-spec (fuller, less gated)
         vocal_models=["kim_vocals", "kim_ft", "vocal_fullness"],
-        instrumental_models=["bs_roformer", "inst_v2"],
+        instrumental_models=["bs_roformer", "inst_v2", "inst_bleedless"],
     ),
     "4stem": Preset(
         name="4stem",
@@ -85,7 +85,7 @@ PRESETS: dict[str, Preset] = {
         ensemble_method="average",
         vocal_method="max_spec",
         vocal_models=["kim_vocals", "kim_ft", "vocal_fullness"],
-        instrumental_models=["bs_roformer", "inst_v2"],
+        instrumental_models=["bs_roformer", "inst_v2", "inst_bleedless"],
     ),
     "6stem": Preset(
         name="6stem",
