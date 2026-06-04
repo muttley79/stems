@@ -97,8 +97,8 @@ PRESETS: dict[str, Preset] = {
     ),
 }
 
-# Default preset when none is supplied: best all-round quality.
-DEFAULT_PRESET = "4stem-max"
+# Default preset when none is supplied: best 2-stem (vocals + instrumental).
+DEFAULT_PRESET = "vocals-max"
 
 
 def get_preset(name: str) -> Preset:

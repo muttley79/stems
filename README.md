@@ -23,9 +23,9 @@ follows the source (e.g. a 48 kHz WebM yields 48 kHz stems).
 | Preset | Output stems | Strategy |
 |--------|--------------|----------|
 | `vocals` | vocals, instrumental | BS-Roformer ep368 (single fast pass) |
-| `vocals-max` | vocals, instrumental | **Vocals:** max-spectrogram ensemble of Kim Jensen + Kim FT + Fullness (fuller, less "gated"). **Instrumental:** averaged ensemble of BS-Roformer + Inst-V2 + Bleedless (low vocal residue). 6 passes — the cleanest, most natural 2-stem. |
+| `vocals-max` *(default)* | vocals, instrumental | **Vocals:** max-spectrogram ensemble of Kim Jensen + Kim FT + Fullness (fuller, less "gated"). **Instrumental:** averaged ensemble of BS-Roformer + Inst-V2 + Bleedless (low vocal residue). 6 passes — the cleanest, most natural 2-stem. |
 | `4stem` | vocals, drums, bass, other | Demucs `htdemucs_ft` (single pass) |
-| `4stem-max` *(default)* | vocals, drums, bass, other | Cascade: ensemble instrumental → Demucs `htdemucs_ft` on the clean instrumental (+ ensemble vocals) |
+| `4stem-max` | vocals, drums, bass, other | Cascade: ensemble instrumental → Demucs `htdemucs_ft` on the clean instrumental (+ ensemble vocals) |
 | `6stem` | vocals, drums, bass, guitar, piano, other | Demucs `htdemucs_6s` |
 
 - **Ensemble** — runs several models and merges per-stem (waveform average or
@@ -84,11 +84,14 @@ models and `~/.cache/torch/hub` for Demucs (override the former with the
 ## Usage
 
 ```powershell
-# Minimal: vocals + instrumental, default output dir → ./output/<track>/
+# Minimal: vocals + instrumental is the default → ./output/<track>/
+stems separate song.mp3
+
+# Same thing, preset stated explicitly
 stems separate song.mp3 -p vocals-max
 
-# Absolute minimal: default preset (4stem-max cascade) → ./output/<track>/
-stems separate song.mp3
+# 4-stem cascade (drums/bass/other) instead
+stems separate song.mp3 -p 4stem-max
 
 # 6 stems (vocals, drums, bass, guitar, piano, other)
 stems separate song.wav out\ --preset 6stem
@@ -125,7 +128,7 @@ stems separate --help
 |--------|---------|-------------|
 | `INPUT` | — | File or folder to process. |
 | `OUTPUT_DIR` | `output` | Where stems are written. |
-| `-p, --preset` | `4stem-max` | Named plan (`vocals`, `vocals-max`, `4stem`, `4stem-max`, `6stem`). |
+| `-p, --preset` | `vocals-max` | Named plan (`vocals`, `vocals-max`, `4stem`, `4stem-max`, `6stem`). |
 | `-m, --model` | — | Raw model override; bypasses preset. |
 | `-e, --engine` | auto | Engine for `--model`: `demucs` or `uvr`. |
 | `--stems` | all | Comma list of stems to keep (e.g. `vocals,drums`). |
@@ -147,11 +150,11 @@ you run the command), with a subfolder named after the input file:
 ```
 output/                       # default OUTPUT_DIR (override by passing one)
 └── <track-name>/             # derived from the input filename
-    ├── vocals.wav   vocals.mp3
-    ├── drums.wav    drums.mp3
-    ├── bass.wav     bass.mp3
-    └── other.wav    other.mp3
+    ├── vocals.wav        vocals.mp3        # default vocals-max → 2 stems
+    └── instrumental.wav  instrumental.mp3
 ```
+
+(A 4-/6-stem preset writes `drums`, `bass`, `other`, etc. into the same layout.)
 
 So `stems separate song.mp3 -p vocals-max` writes to `./output/song/vocals.wav`
 (+ `.mp3`) and `./output/song/instrumental.wav` (+ `.mp3`).
