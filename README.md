@@ -12,6 +12,10 @@ Output is lossless **24-bit WAV** plus a **320 kbps MP3** copy of every stem.
 Single files and whole folders (recursive) are supported, with skip-existing for
 resumable batches.
 
+**Input formats:** WAV, MP3, FLAC, OGG/Opus, M4A/AAC, WMA, AIFF, and WebM/MP4/MKV
+(audio track) — anything libsndfile or ffmpeg can decode. Output sample rate
+follows the source (e.g. a 48 kHz WebM yields 48 kHz stems).
+
 ---
 
 ## Capabilities

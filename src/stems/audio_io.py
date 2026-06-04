@@ -23,7 +23,8 @@ import numpy as np
 import soundfile as sf
 
 SUPPORTED_INPUT_SUFFIXES = {
-    ".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".aiff", ".aif", ".wma",
+    ".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".aiff", ".aif",
+    ".wma", ".webm", ".weba", ".mp4", ".mkv", ".mka",
 }
 
 _FFMPEG = shutil.which("ffmpeg")
