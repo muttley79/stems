@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stems"
+version = "0.1.0"
+description = "Professional CLI audio stem separator (Demucs + UVR/Roformer)"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Arnon Segal" }]
+dependencies = [
+    "numpy>=1.24",
+    "soundfile>=0.12",
+    "typer>=0.12",
+    "rich>=13.0",
+    "demucs>=4.0",
+    "audio-separator>=0.18",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+stems = "stems.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

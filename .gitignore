@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Model weights cache
+models/
+*.ckpt
+*.pth
+*.th
+*.onnx
+
+# Outputs / working audio
+output/
+out/
+*.wav
+*.mp3
+*.flac
+!tests/**/*.wav
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.pytest_cache/
+.coverage
+
+# Claude Code local/runtime files
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
