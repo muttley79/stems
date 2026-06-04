@@ -33,6 +33,7 @@ MODEL_FILES: dict[str, str] = {
     # Best dedicated VOCAL models (vocals target).
     "kim_vocals": "vocals_mel_band_roformer.ckpt",            # 12.60 vocals (best)
     "kim_ft": "mel_band_roformer_kim_ft_unwa.ckpt",           # 12.44 vocals
+    "vocal_fullness": "mel_band_roformer_vocal_fullness_aname.ckpt",  # fuller, less gated
     # Best dedicated INSTRUMENTAL models (instrumental target / low vocal bleed).
     "inst_v2": "melband_roformer_inst_v2.ckpt",               # 16.06 instrumental
     "inst_bleedless": "mel_band_roformer_instrumental_bleedless_v2_gabox.ckpt",

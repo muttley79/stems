@@ -77,7 +77,7 @@ def _run_twostem(
 
     if want_vocals:
         res = _ensemble_stem(
-            audio_path, preset.vocal_models, "vocals", config, preset.ensemble_method
+            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method
         )
         merged["vocals"] = res.stems["vocals"]
         sr = res.sample_rate
@@ -119,7 +119,7 @@ def _run_cascade(
 
     if want_vocals:
         voc = _ensemble_stem(
-            audio_path, preset.vocal_models, "vocals", config, preset.ensemble_method
+            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method
         )
         merged["vocals"] = voc.stems["vocals"]
 

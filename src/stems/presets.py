@@ -28,7 +28,8 @@ class Preset:
     engine: str  # "demucs" or "uvr"; for cascade this is the residual engine
     models: list[str] = field(default_factory=list)
     output_stems: list[str] = field(default_factory=list)
-    ensemble_method: str = "average"
+    ensemble_method: str = "average"  # used for the instrumental ensemble
+    vocal_method: str = "average"     # used for the vocal ensemble (may differ)
     # cascade-only: which model isolates vocals before the residual pass.
     vocal_engine: str = "uvr"
     vocal_model: str = "bs_roformer"
@@ -51,15 +52,16 @@ PRESETS: dict[str, Preset] = {
     "vocals-max": Preset(
         name="vocals-max",
         description=(
-            "Best 2-stem: ensemble of top vocal models (Kim Jensen + Kim FT) for "
-            "vocals, dedicated instrumental models (BS-Roformer + Inst-V2) for "
-            "instrumental. 4 passes."
+            "Best 2-stem: max-spec ensemble of Kim + Kim FT + Fullness for fuller, "
+            "less-gated vocals; dedicated instrumental models (BS-Roformer + "
+            "Inst-V2, averaged) for a clean instrumental. 5 passes."
         ),
         kind="twostem",
         engine="uvr",
         output_stems=["vocals", "instrumental"],
-        ensemble_method="average",
-        vocal_models=["kim_vocals", "kim_ft"],
+        ensemble_method="average",          # instrumental: average (kept clean)
+        vocal_method="max_spec",            # vocals: max-spec (fuller, less gated)
+        vocal_models=["kim_vocals", "kim_ft", "vocal_fullness"],
         instrumental_models=["bs_roformer", "inst_v2"],
     ),
     "4stem": Preset(
@@ -81,7 +83,8 @@ PRESETS: dict[str, Preset] = {
         models=["htdemucs_ft"],
         output_stems=["vocals", "drums", "bass", "other"],
         ensemble_method="average",
-        vocal_models=["kim_vocals", "kim_ft"],
+        vocal_method="max_spec",
+        vocal_models=["kim_vocals", "kim_ft", "vocal_fullness"],
         instrumental_models=["bs_roformer", "inst_v2"],
     ),
     "6stem": Preset(

@@ -24,6 +24,18 @@ out/
 *.wav
 *.mp3
 *.flac
+*.ogg
+*.opus
+*.m4a
+*.aac
+*.wma
+*.aiff
+*.aif
+*.webm
+*.weba
+*.mp4
+*.mkv
+*.mka
 !tests/**/*.wav
 
 # IDE / OS

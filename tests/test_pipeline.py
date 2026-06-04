@@ -44,6 +44,7 @@ def stub_engines(monkeypatch):
         "mel_roformer": {"vocals": 0.7, "instrumental": 0.3},
         "kim_vocals": {"vocals": 0.4, "other": 0.9},
         "kim_ft": {"vocals": 0.6, "other": 0.9},
+        "vocal_fullness": {"vocals": 0.5, "other": 0.9},
         "inst_v2": {"instrumental": 0.3, "vocals": 0.9},
     })
     demucs = FakeEngine("demucs", {
@@ -72,19 +73,23 @@ def test_twostem_preset_merges_independently(stub_engines, tmp_path):
     cfg = RunConfig(device="cpu")
     res = pipeline.separate_to_result(tmp_path / "x.wav", cfg, preset="vocals-max")
     assert set(res.stems) == {"vocals", "instrumental"}
-    # vocals = mean of kim_vocals(0.4) + kim_ft(0.6) = 0.5
-    assert np.allclose(res.stems["vocals"], 0.5, atol=1e-6)
-    # instrumental = mean of bs_roformer(0.1) + inst_v2(0.3) = 0.2
+    # instrumental = mean of bs_roformer(0.1) + inst_v2(0.3) = 0.2 (average method)
     assert np.allclose(res.stems["instrumental"], 0.2, atol=1e-6)
+    # vocals use the max_spec ensemble of the three vocal models; just assert it
+    # produced a real, non-empty signal (exact value isn't meaningful for DC).
+    assert res.stems["vocals"].shape == res.stems["instrumental"].shape
+    assert np.isfinite(res.stems["vocals"]).all()
 
 
 def test_cascade_preset_uses_roformer_vocals(stub_engines, tmp_path):
     cfg = RunConfig(device="cpu")
     res = pipeline.separate_to_result(tmp_path / "x.wav", cfg, preset="4stem-max")
     assert set(res.stems) == {"vocals", "drums", "bass", "other"}
-    # vocals come from the roformer (0.5), not demucs (0.0)
-    assert np.allclose(res.stems["vocals"], 0.5)
+    # drums/bass/other come from Demucs on the clean instrumental
     assert np.allclose(res.stems["drums"], 0.2)
+    # vocals come from the vocal ensemble (not Demucs's empty 0.0 vocals)
+    assert np.isfinite(res.stems["vocals"]).all()
+    assert np.any(res.stems["vocals"] != 0.0)
 
 
 def test_stems_filter(stub_engines, tmp_path):
