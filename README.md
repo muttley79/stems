@@ -84,13 +84,16 @@ models and `~/.cache/torch/hub` for Demucs (override the former with the
 ## Usage
 
 ```powershell
-# Default best-quality 4-stem (cascade) on a single file → ./output/<track>/
+# Minimal: vocals + instrumental, default output dir → ./output/<track>/
+stems separate song.mp3 -p vocals-max
+
+# Absolute minimal: default preset (4stem-max cascade) → ./output/<track>/
 stems separate song.mp3
 
 # 6 stems (vocals, drums, bass, guitar, piano, other)
 stems separate song.wav out\ --preset 6stem
 
-# Cleanest vocals/instrumental via model ensemble
+# Cleanest vocals/instrumental via model ensemble (explicit output dir)
 stems separate song.mp3 out\ -p vocals-max
 
 # Only keep certain stems, WAV only
@@ -138,14 +141,20 @@ stems separate --help
 
 ## Output layout
 
+If you omit the output directory, it defaults to **`./output`** (relative to where
+you run the command), with a subfolder named after the input file:
+
 ```
-output/
-└── <track-name>/
+output/                       # default OUTPUT_DIR (override by passing one)
+└── <track-name>/             # derived from the input filename
     ├── vocals.wav   vocals.mp3
     ├── drums.wav    drums.mp3
     ├── bass.wav     bass.mp3
     └── other.wav    other.mp3
 ```
+
+So `stems separate song.mp3 -p vocals-max` writes to `./output/song/vocals.wav`
+(+ `.mp3`) and `./output/song/instrumental.wav` (+ `.mp3`).
 
 In batch mode the input folder structure is mirrored under `OUTPUT_DIR`. Stems are
 **not** loudness-normalized, so summing all stems of a Demucs run reconstructs
