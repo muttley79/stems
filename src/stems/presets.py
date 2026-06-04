@@ -72,13 +72,17 @@ PRESETS: dict[str, Preset] = {
     ),
     "4stem-max": Preset(
         name="4stem-max",
-        description="4-stem via Roformer vocals + Demucs residual (highest quality).",
+        description=(
+            "Best 4-stem: ensemble instrumental split, then Demucs htdemucs_ft on "
+            "the clean instrumental for tight drums/bass/other (+ ensemble vocals)."
+        ),
         kind="cascade",
         engine="demucs",
         models=["htdemucs_ft"],
         output_stems=["vocals", "drums", "bass", "other"],
-        vocal_engine="uvr",
-        vocal_model="bs_roformer",
+        ensemble_method="average",
+        vocal_models=["kim_vocals", "kim_ft"],
+        instrumental_models=["bs_roformer", "inst_v2"],
     ),
     "6stem": Preset(
         name="6stem",

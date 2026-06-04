@@ -20,17 +20,25 @@ resumable batches.
 |--------|--------------|----------|
 | `vocals` | vocals, instrumental | BS-Roformer ep368 (single fast pass) |
 | `vocals-max` | vocals, instrumental | Ensemble of top vocal models (Kim Jensen + Kim FT) for vocals **and** dedicated instrumental models (BS-Roformer + Inst-V2) for instrumental — 4 passes, cleanest 2-stem |
-| `4stem` | vocals, drums, bass, other | Demucs `htdemucs_ft` |
-| `4stem-max` *(default)* | vocals, drums, bass, other | Cascade: Roformer vocals + Demucs residual |
+| `4stem` | vocals, drums, bass, other | Demucs `htdemucs_ft` (single pass) |
+| `4stem-max` *(default)* | vocals, drums, bass, other | Cascade: ensemble instrumental → Demucs `htdemucs_ft` on the clean instrumental (+ ensemble vocals) |
 | `6stem` | vocals, drums, bass, guitar, piano, other | Demucs `htdemucs_6s` |
 
 - **Ensemble** — runs several models and merges per-stem (waveform average or
   max-spectrogram) for the cleanest possible result.
-- **Cascade** — isolates vocals with the best vocal model, then runs Demucs on the
-  *vocal-free residual* so vocals don't bleed into drums/bass/other. This is the
-  default and gives the best practical 4-stem split.
+- **Cascade** (`4stem-max`) — builds the cleanest instrumental via the dedicated
+  instrumental ensemble, then runs Demucs on *that* (not the raw mix) so vocals
+  never bleed into drums/bass/other. Vocals come from the vocal ensemble and are
+  only computed when requested — `--stems drums,bass,other` skips the vocal
+  passes for speed.
 - **Raw model override** — `--model htdemucs_6s` or `--model bs_roformer` bypasses
   presets for full control.
+
+> **On guitar/piano:** only `6stem` (`htdemucs_6s`) outputs them, and they are
+> weak — it's the single open model that attempts a 6-way split and it sacrifices
+> quality on *every* stem to do so. For usable drums/bass/other, prefer
+> `4stem-max`. Clean guitar/piano isolation is still an unsolved problem in
+> open-source source separation.
 
 ---
 

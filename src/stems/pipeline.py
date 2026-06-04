@@ -51,6 +51,17 @@ def _run_ensemble(
     return ensemble_results(results, method=preset.ensemble_method)
 
 
+def _ensemble_stem(
+    audio_path: Path, models: list[str], stem: str, config: RunConfig, method: str,
+) -> SeparationResult:
+    """Run each model isolating ``stem``, then merge. Returns a single-stem result."""
+    results = [
+        get_engine("uvr").separate(audio_path, m, config, stems=[stem])
+        for m in models
+    ]
+    return ensemble_results(results, method=method)
+
+
 def _run_twostem(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
 ) -> SeparationResult:
@@ -58,7 +69,6 @@ def _run_twostem(
     instrumental, each merged independently. Avoids dragging a strong model down
     with a weaker one and uses purpose-built instrumental models to kill bleed.
     """
-    uvr = get_engine(preset.engine)
     want_vocals = stems is None or "vocals" in stems
     want_instrumental = stems is None or "instrumental" in stems
 
@@ -66,22 +76,19 @@ def _run_twostem(
     sr = 44100
 
     if want_vocals:
-        vocal_results = [
-            uvr.separate(audio_path, m, config, stems=["vocals"])
-            for m in preset.vocal_models
-        ]
-        vocals = ensemble_results(vocal_results, method=preset.ensemble_method)
-        merged["vocals"] = vocals.stems["vocals"]
-        sr = vocals.sample_rate
+        res = _ensemble_stem(
+            audio_path, preset.vocal_models, "vocals", config, preset.ensemble_method
+        )
+        merged["vocals"] = res.stems["vocals"]
+        sr = res.sample_rate
 
     if want_instrumental:
-        inst_results = [
-            uvr.separate(audio_path, m, config, stems=["instrumental"])
-            for m in preset.instrumental_models
-        ]
-        instrumental = ensemble_results(inst_results, method=preset.ensemble_method)
-        merged["instrumental"] = instrumental.stems["instrumental"]
-        sr = instrumental.sample_rate
+        res = _ensemble_stem(
+            audio_path, preset.instrumental_models, "instrumental", config,
+            preset.ensemble_method,
+        )
+        merged["instrumental"] = res.stems["instrumental"]
+        sr = res.sample_rate
 
     return SeparationResult(stems=merged, sample_rate=sr)
 
@@ -89,26 +96,44 @@ def _run_twostem(
 def _run_cascade(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
 ) -> SeparationResult:
-    """Roformer vocals + Demucs on the vocal-free residual for drums/bass/other."""
-    vocal_res = get_engine(preset.vocal_engine).separate(
-        audio_path, preset.vocal_model, config, stems=None
+    """Best 4-stem: build the cleanest instrumental (ensemble of dedicated
+    instrumental models), then run Demucs on it for drums/bass/other. Vocals come
+    from the vocal-model ensemble and are only computed when actually requested,
+    so ``--stems drums,bass,other`` skips the vocal passes entirely.
+    """
+    want_vocals = stems is None or "vocals" in stems
+    drum_stems = ("drums", "bass", "other")
+    want_drumset = stems is None or any(s in stems for s in drum_stems)
+
+    merged: dict[str, np.ndarray] = {}
+    sr = 44100
+
+    # Clean instrumental via the strong instrumental ensemble (same quality as
+    # the 'amazing' vocals-max instrumental).
+    inst = _ensemble_stem(
+        audio_path, preset.instrumental_models, "instrumental", config,
+        preset.ensemble_method,
     )
-    vocals = vocal_res.stems["vocals"]
-    instrumental = vocal_res.stems.get("instrumental")
-    sr = vocal_res.sample_rate
+    instrumental = inst.stems["instrumental"]
+    sr = inst.sample_rate
 
-    merged: dict[str, np.ndarray] = {"vocals": vocals}
-
-    # Run Demucs on the instrumental residual so vocals don't bleed into other.
-    with tempfile.TemporaryDirectory() as tmp:
-        residual_path = Path(tmp) / "residual.wav"
-        write_wav(residual_path, instrumental, sr, bitdepth=32)
-        demucs_res = get_engine(preset.engine).separate(
-            residual_path, preset.models[0], config, stems=None
+    if want_vocals:
+        voc = _ensemble_stem(
+            audio_path, preset.vocal_models, "vocals", config, preset.ensemble_method
         )
-    for name in ("drums", "bass", "other", "guitar", "piano"):
-        if name in demucs_res.stems:
-            merged[name] = demucs_res.stems[name]
+        merged["vocals"] = voc.stems["vocals"]
+
+    if want_drumset:
+        # Demucs 4-stem on the clean instrumental -> tight drums/bass/other.
+        with tempfile.TemporaryDirectory() as tmp:
+            residual_path = Path(tmp) / "residual.wav"
+            write_wav(residual_path, instrumental, sr, bitdepth=32)
+            demucs_res = get_engine(preset.engine).separate(
+                residual_path, preset.models[0], config, stems=None
+            )
+        for name in drum_stems:
+            if name in demucs_res.stems:
+                merged[name] = demucs_res.stems[name]
 
     if stems:
         merged = {k: v for k, v in merged.items() if k in stems}
