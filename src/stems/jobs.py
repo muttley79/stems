@@ -19,7 +19,9 @@ from rich.progress import (
 
 from stems.audio_io import SUPPORTED_INPUT_SUFFIXES
 from stems.config import RunConfig
-from stems.pipeline import Step, separate_file
+from stems.pipeline import (
+    Step, iter_required_models, prefetch_models, separate_file,
+)
 
 console = Console()
 
@@ -86,6 +88,15 @@ def run_batch(
         return []
 
     config.ensure_dirs()
+
+    # Fetch any missing weights up front, outside the live display below, so the
+    # backends' own download bars show cleanly instead of hanging silently (UVR)
+    # or colliding with the rich progress display (Demucs).
+    prefetch_models(
+        iter_required_models(preset=preset, engine=engine, model=model),
+        config, console,
+    )
+
     results: list[JobResult] = []
 
     multi = len(inputs) > 1

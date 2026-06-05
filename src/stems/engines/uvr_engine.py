@@ -118,7 +118,7 @@ class UvrSeparator(BaseSeparator):
         model_file = resolve_model_file(model)
         config.ensure_dirs()
 
-        with tempfile.TemporaryDirectory() as tmp, _quiet_separator():
+        with tempfile.TemporaryDirectory() as tmp:
             separator = Separator(
                 log_level=logging.WARNING,  # drop the per-run INFO banner spam
                 model_file_dir=str(config.model_dir),
@@ -126,8 +126,12 @@ class UvrSeparator(BaseSeparator):
                 output_format="WAV",
                 use_autocast=(config.device == "cuda"),
             )
+            # load_model is left *outside* _quiet_separator so a first-run weight
+            # download keeps its own progress bar; only the per-chunk inference
+            # tqdm spam is silenced (our rich bar reports overall job progress).
             separator.load_model(model_filename=model_file)
-            produced = separator.separate(str(audio_path))
+            with _quiet_separator():
+                produced = separator.separate(str(audio_path))
 
             wanted = set(stems) if stems else None
             out: dict[str, np.ndarray] = {}

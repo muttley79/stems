@@ -252,6 +252,129 @@ def separate_file(
     return written
 
 
+def iter_required_models(
+    preset: str | None = None,
+    engine: str | None = None,
+    model: str | None = None,
+) -> list[tuple[str, str]]:
+    """List the ``(engine, model)`` pairs a run will load, for weight prefetch.
+
+    Mirrors the plan resolution in :func:`separate_to_result` but only collects
+    model identities (no separation). Order is the order they'll be used; the
+    list is de-duplicated. Used by :func:`prefetch_models` so missing weights can
+    be downloaded up front with visible progress, before the batch's live display
+    starts. Models filtered out by a ``--stems`` subset are still listed (a small
+    over-fetch is cheaper than duplicating the want/skip logic here).
+    """
+    if model is not None:
+        return [(engine or _infer_engine_for_model(model), model)]
+
+    p = get_preset(preset) if preset else get_preset(_default_preset())
+    pairs: list[tuple[str, str]] = []
+    if p.kind == "single":
+        pairs.append((p.engine, p.models[0]))
+    elif p.kind == "ensemble":
+        pairs += [(p.engine, m) for m in p.models]
+    elif p.kind == "twostem":
+        pairs += [("uvr", m) for m in p.vocal_models]
+        pairs += [("uvr", m) for m in p.instrumental_models]
+    elif p.kind == "cascade":
+        pairs += [("uvr", m) for m in p.instrumental_models]
+        pairs += [("uvr", m) for m in p.vocal_models]
+        pairs.append((p.engine, p.models[0]))
+
+    seen: set[tuple[str, str]] = set()
+    uniq: list[tuple[str, str]] = []
+    for pe in pairs:
+        if pe not in seen:
+            seen.add(pe)
+            uniq.append(pe)
+    return uniq
+
+
+def prefetch_models(
+    pairs: list[tuple[str, str]], config: RunConfig, console=None
+) -> None:
+    """Download any missing model weights, with the backends' own progress bars.
+
+    Runs *before* the batch's live progress display and outside the UVR quiet
+    patch, so download bars render cleanly instead of being silenced (UVR's tqdm
+    is force-disabled during a run) or garbled by the rich live display (Demucs).
+    A failure here is non-fatal: we warn and let the real pass try again, so a
+    transient hiccup or an unexpected cache layout never aborts the batch.
+    """
+    config.ensure_dirs()
+    for engine, model in pairs:
+        try:
+            if engine == "uvr":
+                _prefetch_uvr(model, config, console)
+            elif engine == "demucs":
+                _prefetch_demucs(model, config, console)
+        except Exception as exc:  # never let prefetch sink the run
+            if console is not None:
+                console.print(
+                    f"[yellow]Could not prefetch {model}: {exc} "
+                    f"(will retry during separation).[/yellow]"
+                )
+
+
+def _say_downloading(console, model: str) -> None:
+    msg = f"[cyan]↓ Downloading model[/cyan] [magenta]{model}[/magenta] …"
+    if console is not None:
+        console.print(msg)
+    else:
+        print(msg)
+
+
+def _prefetch_uvr(model: str, config: RunConfig, console) -> None:
+    from stems.engines.uvr_engine import resolve_model_file
+
+    ckpt = config.model_dir / resolve_model_file(model)
+    if ckpt.exists():
+        return
+    _say_downloading(console, model)
+    import logging
+    import tempfile
+
+    from audio_separator.separator import Separator  # lazy: only when missing
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sep = Separator(
+            log_level=logging.WARNING,
+            model_file_dir=str(config.model_dir),
+            output_dir=tmp,
+        )
+        sep.load_model(model_filename=resolve_model_file(model))
+
+
+def _demucs_cached(model: str) -> bool:
+    """Best-effort: are Demucs weights already in the torch hub cache?
+
+    We can't know the exact signature filenames without loading the model, so we
+    treat a populated ``<hub>/checkpoints`` dir as cached. First-ever run: dir is
+    empty/absent, so the slow download is prefetched with a visible bar; later
+    runs skip the prefetch and load normally. (Switching to a not-yet-downloaded
+    Demucs model when the cache is already populated falls back to the old
+    in-pipeline download — acceptable for this rare case.)
+    """
+    try:
+        import torch
+
+        ckpt_dir = Path(torch.hub.get_dir()) / "checkpoints"
+        return ckpt_dir.is_dir() and any(ckpt_dir.glob("*.th"))
+    except Exception:
+        return False
+
+
+def _prefetch_demucs(model: str, config: RunConfig, console) -> None:
+    if _demucs_cached(model):
+        return
+    _say_downloading(console, model)
+    from demucs.pretrained import get_model  # lazy: only when likely missing
+
+    get_model(name=model)  # triggers torch.hub download with its own progress bar
+
+
 def _infer_engine_for_model(model: str) -> str:
     """Guess the backend for a raw model name."""
     demucs_like = ("htdemucs", "mdx_extra", "demucs")
