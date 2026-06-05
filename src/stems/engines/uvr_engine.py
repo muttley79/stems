@@ -12,6 +12,8 @@ onnxruntime/torch is present; ``config.device == "cpu"`` forces CPU.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import tempfile
 from pathlib import Path
 
@@ -63,6 +65,32 @@ def resolve_model_file(model: str) -> str:
     return MODEL_FILES.get(model, model)
 
 
+@contextlib.contextmanager
+def _quiet_separator():
+    """Silence audio-separator's per-chunk noise for the duration of a run.
+
+    The library hard-codes its tqdm progress bars (no ``disable`` flag is
+    threaded through), so they spew one line per update whenever stdout isn't a
+    TTY — e.g. when output is piped to a file. We force-disable tqdm by patching
+    its ``__init__`` (every ``from tqdm import tqdm`` shares this one class), then
+    restore it. INFO logging is quieted separately via the ``Separator``'s
+    ``log_level``. Our own rich progress bar reports overall job progress.
+    """
+    from tqdm import std as tqdm_std
+
+    original_init = tqdm_std.tqdm.__init__
+
+    def patched_init(self, *args, **kwargs):
+        kwargs["disable"] = True
+        original_init(self, *args, **kwargs)
+
+    tqdm_std.tqdm.__init__ = patched_init
+    try:
+        yield
+    finally:
+        tqdm_std.tqdm.__init__ = original_init
+
+
 def _classify_stem(filename: str) -> str:
     low = filename.lower()
     for keyword, canonical in _STEM_KEYWORDS:
@@ -90,8 +118,9 @@ class UvrSeparator(BaseSeparator):
         model_file = resolve_model_file(model)
         config.ensure_dirs()
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, _quiet_separator():
             separator = Separator(
+                log_level=logging.WARNING,  # drop the per-run INFO banner spam
                 model_file_dir=str(config.model_dir),
                 output_dir=tmp,
                 output_format="WAV",

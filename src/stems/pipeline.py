@@ -8,7 +8,9 @@ writes each stem to disk via :mod:`stems.audio_io`.
 from __future__ import annotations
 
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -27,6 +29,38 @@ _ENGINES: dict[str, BaseSeparator] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class Step:
+    """One model pass within a plan, reported just before it starts.
+
+    ``index``/``total`` are 1-based ("pass 2 of 6"); ``model`` is the friendly
+    model name and ``action`` says what it is doing (e.g. "isolating vocals").
+    """
+
+    index: int
+    total: int
+    model: str
+    action: str
+
+
+# Called before each separation pass so callers (the CLI) can show live progress.
+StepCallback = Callable[[Step], None]
+
+
+class _StepTracker:
+    """Counts passes and emits a :class:`Step` to the callback before each one."""
+
+    def __init__(self, callback: StepCallback | None, total: int) -> None:
+        self._cb = callback
+        self.total = total
+        self._i = 0
+
+    def begin(self, model: str, action: str) -> None:
+        self._i += 1
+        if self._cb is not None:
+            self._cb(Step(self._i, self.total, model, action))
+
+
 def get_engine(name: str) -> BaseSeparator:
     try:
         return _ENGINES[name]
@@ -36,34 +70,41 @@ def get_engine(name: str) -> BaseSeparator:
 
 def _run_single(
     audio_path: Path, engine: str, model: str, config: RunConfig,
-    stems: list[str] | None,
+    stems: list[str] | None, on_step: StepCallback | None = None,
 ) -> SeparationResult:
+    action = "separating vocals + instrumental" if engine == "uvr" else "splitting stems"
+    _StepTracker(on_step, 1).begin(model, action)
     return get_engine(engine).separate(audio_path, model, config, stems)
 
 
 def _run_ensemble(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
+    on_step: StepCallback | None = None,
 ) -> SeparationResult:
-    results = [
-        get_engine(preset.engine).separate(audio_path, m, config, stems)
-        for m in preset.models
-    ]
+    tracker = _StepTracker(on_step, len(preset.models))
+    results = []
+    for m in preset.models:
+        tracker.begin(m, "separating")
+        results.append(get_engine(preset.engine).separate(audio_path, m, config, stems))
     return ensemble_results(results, method=preset.ensemble_method)
 
 
 def _ensemble_stem(
     audio_path: Path, models: list[str], stem: str, config: RunConfig, method: str,
+    tracker: _StepTracker | None = None,
 ) -> SeparationResult:
     """Run each model isolating ``stem``, then merge. Returns a single-stem result."""
-    results = [
-        get_engine("uvr").separate(audio_path, m, config, stems=[stem])
-        for m in models
-    ]
+    results = []
+    for m in models:
+        if tracker is not None:
+            tracker.begin(m, f"isolating {stem}")
+        results.append(get_engine("uvr").separate(audio_path, m, config, stems=[stem]))
     return ensemble_results(results, method=method)
 
 
 def _run_twostem(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
+    on_step: StepCallback | None = None,
 ) -> SeparationResult:
     """Clean 2-stem: ensemble vocal models for vocals, instrumental models for
     instrumental, each merged independently. Avoids dragging a strong model down
@@ -72,12 +113,18 @@ def _run_twostem(
     want_vocals = stems is None or "vocals" in stems
     want_instrumental = stems is None or "instrumental" in stems
 
+    total = (len(preset.vocal_models) if want_vocals else 0) + (
+        len(preset.instrumental_models) if want_instrumental else 0
+    )
+    tracker = _StepTracker(on_step, total)
+
     merged: dict[str, np.ndarray] = {}
     sr = 44100
 
     if want_vocals:
         res = _ensemble_stem(
-            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method
+            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method,
+            tracker,
         )
         merged["vocals"] = res.stems["vocals"]
         sr = res.sample_rate
@@ -85,7 +132,7 @@ def _run_twostem(
     if want_instrumental:
         res = _ensemble_stem(
             audio_path, preset.instrumental_models, "instrumental", config,
-            preset.ensemble_method,
+            preset.ensemble_method, tracker,
         )
         merged["instrumental"] = res.stems["instrumental"]
         sr = res.sample_rate
@@ -95,6 +142,7 @@ def _run_twostem(
 
 def _run_cascade(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
+    on_step: StepCallback | None = None,
 ) -> SeparationResult:
     """Best 4-stem: build the cleanest instrumental (ensemble of dedicated
     instrumental models), then run Demucs on it for drums/bass/other. Vocals come
@@ -105,6 +153,13 @@ def _run_cascade(
     drum_stems = ("drums", "bass", "other")
     want_drumset = stems is None or any(s in stems for s in drum_stems)
 
+    total = (
+        len(preset.instrumental_models)
+        + (len(preset.vocal_models) if want_vocals else 0)
+        + (1 if want_drumset else 0)
+    )
+    tracker = _StepTracker(on_step, total)
+
     merged: dict[str, np.ndarray] = {}
     sr = 44100
 
@@ -112,14 +167,15 @@ def _run_cascade(
     # the 'amazing' vocals-max instrumental).
     inst = _ensemble_stem(
         audio_path, preset.instrumental_models, "instrumental", config,
-        preset.ensemble_method,
+        preset.ensemble_method, tracker,
     )
     instrumental = inst.stems["instrumental"]
     sr = inst.sample_rate
 
     if want_vocals:
         voc = _ensemble_stem(
-            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method
+            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method,
+            tracker,
         )
         merged["vocals"] = voc.stems["vocals"]
 
@@ -128,6 +184,7 @@ def _run_cascade(
         with tempfile.TemporaryDirectory() as tmp:
             residual_path = Path(tmp) / "residual.wav"
             write_wav(residual_path, instrumental, sr, bitdepth=32)
+            tracker.begin(preset.models[0], "splitting drums/bass/other")
             demucs_res = get_engine(preset.engine).separate(
                 residual_path, preset.models[0], config, stems=None
             )
@@ -147,25 +204,27 @@ def separate_to_result(
     engine: str | None = None,
     model: str | None = None,
     stems: list[str] | None = None,
+    on_step: StepCallback | None = None,
 ) -> SeparationResult:
     """Resolve the plan and produce stems in memory.
 
     Precedence: an explicit ``model`` (with optional ``engine``) overrides the
-    preset. Otherwise the named ``preset`` plan runs.
+    preset. Otherwise the named ``preset`` plan runs. ``on_step`` is invoked
+    before each model pass for progress reporting.
     """
     if model is not None:
         eng = engine or _infer_engine_for_model(model)
-        return _run_single(audio_path, eng, model, config, stems)
+        return _run_single(audio_path, eng, model, config, stems, on_step)
 
     p = get_preset(preset) if preset else get_preset(_default_preset())
     if p.kind == "single":
-        return _run_single(audio_path, p.engine, p.models[0], config, stems)
+        return _run_single(audio_path, p.engine, p.models[0], config, stems, on_step)
     if p.kind == "ensemble":
-        return _run_ensemble(audio_path, p, config, stems)
+        return _run_ensemble(audio_path, p, config, stems, on_step)
     if p.kind == "twostem":
-        return _run_twostem(audio_path, p, config, stems)
+        return _run_twostem(audio_path, p, config, stems, on_step)
     if p.kind == "cascade":
-        return _run_cascade(audio_path, p, config, stems)
+        return _run_cascade(audio_path, p, config, stems, on_step)
     raise ValueError(f"Unsupported preset kind: {p.kind}")
 
 
@@ -178,9 +237,12 @@ def separate_file(
     model: str | None = None,
     stems: list[str] | None = None,
     fmt: str = "both",
+    on_step: StepCallback | None = None,
 ) -> list[Path]:
     """Separate ``audio_path`` and write stems into ``out_dir``. Returns paths."""
-    result = separate_to_result(audio_path, config, preset, engine, model, stems)
+    result = separate_to_result(
+        audio_path, config, preset, engine, model, stems, on_step
+    )
     written: list[Path] = []
     for name, audio in result.stems.items():
         written += export_stem(

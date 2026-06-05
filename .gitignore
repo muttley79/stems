@@ -23,6 +23,7 @@ models/
 output/*
 !output/.gitkeep
 out/
+inputs/
 *.wav
 *.mp3
 *.flac
