@@ -51,7 +51,7 @@ def discover_inputs(path: Path, recursive: bool = False) -> list[Path]:
     return files
 
 
-def _output_dir_for(
+def output_dir_for(
     input_file: Path, input_root: Path, output_root: Path
 ) -> Path:
     """Compute the per-track output directory, preserving subfolders in batch."""
@@ -61,7 +61,7 @@ def _output_dir_for(
     return output_root / rel / input_file.stem
 
 
-def _outputs_exist(out_dir: Path) -> bool:
+def outputs_exist(out_dir: Path) -> bool:
     if not out_dir.is_dir():
         return False
     return any(out_dir.glob("*.wav")) or any(out_dir.glob("*.mp3"))
@@ -115,12 +115,12 @@ def run_batch(
         )
         step_task = progress.add_task("[dim]preparing…[/dim]", total=1)
         for f in inputs:
-            out_dir = _output_dir_for(f, input_path, output_root)
+            out_dir = output_dir_for(f, input_path, output_root)
             progress.reset(
                 step_task, total=1, description=f"[cyan]{f.name}[/cyan]"
             )
 
-            if skip_existing and _outputs_exist(out_dir):
+            if skip_existing and outputs_exist(out_dir):
                 results.append(JobResult(f, out_dir, skipped=True))
                 progress.update(
                     step_task, completed=1,

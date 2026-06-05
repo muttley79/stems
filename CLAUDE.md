@@ -41,7 +41,11 @@ src/stems/
 │   └── uvr_engine.py     # UvrSeparator (+ MODEL_FILES alias table)
 ├── ensemble.py        # ensemble_results(): average / max_spec merge
 ├── pipeline.py        # separate_to_result()/separate_file(): the orchestrator
-└── jobs.py            # discover_inputs(), run_batch(): batch + progress + summary
+├── jobs.py            # discover_inputs(), run_batch(): batch + progress + summary
+└── gui/               # optional CustomTkinter desktop front-end (gui extra)
+    ├── __init__.py    # main(): lazy-imports customtkinter, launches the window
+    ├── app.py         # StemsApp(ctk.CTk): widgets + queue-drained event pump
+    └── worker.py      # run_job(): background batch runner emitting queue events
 tests/                 # pytest; backends are stubbed, no models/GPU needed
 ```
 

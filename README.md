@@ -122,6 +122,23 @@ stems --help
 stems separate --help
 ```
 
+### Desktop GUI
+
+A desktop GUI (CustomTkinter) is available alongside the CLI — same engine, same
+presets, with live progress and a download indicator. Install the optional extra
+and launch it:
+
+```powershell
+pip install -e .[gui]      # adds customtkinter
+stems-gui                  # or run stems-gui.bat from anywhere
+```
+
+Pick an input file or folder, choose a preset (or a raw model override), set the
+output folder/format/device, and click **Separate**. The window stays responsive
+while separation runs on a background thread; a step bar tracks each model pass
+(and animates while weights are downloading), and **Open output folder** reveals
+the results.
+
 ### CLI options (`stems separate`)
 
 | Option | Default | Description |
@@ -181,7 +198,8 @@ src/stems/
 │   └── uvr_engine.py
 ├── ensemble.py       # average / max-spectrogram model merging
 ├── pipeline.py       # single / ensemble / cascade orchestration + export
-└── jobs.py           # batch discovery, progress, skip-existing, summary
+├── jobs.py           # batch discovery, progress, skip-existing, summary
+└── gui/              # optional CustomTkinter desktop front-end (thin, over pipeline)
 ```
 
 ---

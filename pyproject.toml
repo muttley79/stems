@@ -21,9 +21,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+gui = ["customtkinter>=5.2", "tkinterdnd2>=0.4"]
 
 [project.scripts]
 stems = "stems.cli:app"
+
+[project.gui-scripts]
+stems-gui = "stems.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
