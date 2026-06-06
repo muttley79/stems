@@ -89,17 +89,21 @@ class _PrefetchConsole:
             self._events.put(Event("log", {"message": text}))
 
 
-def run_job(
+def _process_one(
     params: JobParams,
     events: "queue.Queue[Event]",
     cancel: threading.Event,
+    skip_current: threading.Event,
+    summary: dict,
 ) -> None:
-    """Process all inputs, emitting :class:`Event`s. Runs on a worker thread.
+    """Run one :class:`JobParams` (which may expand to many files).
 
-    Always finishes by emitting a ``batch_done`` event (even on early failure or
-    cancellation) so the UI can re-enable its controls in one place.
+    Emits the per-file events and updates ``summary`` in place; emits **no**
+    terminal event so it can be reused for both a lone job and a queue. Two
+    cooperative flags are checked between files: ``cancel`` (abandon the whole
+    run) and ``skip_current`` (stop just this job). A single in-flight file pass
+    always finishes first — it cannot be interrupted mid-pass safely.
     """
-    summary = {"done": 0, "skipped": 0, "failed": 0, "cancelled": False}
     try:
         config = RunConfig(
             device=resolve_device(params.device),
@@ -133,6 +137,9 @@ def run_job(
                 summary["cancelled"] = True
                 events.put(Event("log", {"message": "Cancelled."}))
                 break
+            if skip_current.is_set():
+                events.put(Event("log", {"message": "Skipped remaining files."}))
+                break
 
             out_dir = output_dir_for(f, params.input_path, params.output_root)
             events.put(Event(
@@ -164,18 +171,84 @@ def run_job(
                     "out_dir": str(out_dir),
                     "written": [str(p) for p in written],
                 }))
-            except Exception as exc:  # keep batch going on per-file failure
+            except Exception as exc:  # keep going on per-file failure
                 summary["failed"] += 1
                 events.put(Event("file_error", {
                     "name": f.name, "index": idx, "message": str(exc),
                 }))
     except Exception as exc:  # discovery/config-level failure: report and stop
+        summary["failed"] += 1
         events.put(Event("file_error", {
             "name": str(params.input_path), "message": str(exc),
             "traceback": traceback.format_exc(),
         }))
+
+
+def run_job(
+    params: JobParams,
+    events: "queue.Queue[Event]",
+    cancel: threading.Event,
+) -> None:
+    """Process a single :class:`JobParams`, emitting :class:`Event`s.
+
+    Runs on a worker thread and always finishes with a ``batch_done`` event (even
+    on early failure or cancellation) so the UI can re-enable controls in one
+    place. Used for the no-queue "Separate" path.
+    """
+    summary = {"done": 0, "skipped": 0, "failed": 0, "cancelled": False}
+    try:
+        _process_one(params, events, cancel, threading.Event(), summary)
     finally:
         events.put(Event("batch_done", summary))
+
+
+def run_jobs(
+    job_q: "queue.Queue[tuple[int, JobParams]]",
+    events: "queue.Queue[Event]",
+    cancel: threading.Event,
+    skip_current: threading.Event,
+) -> None:
+    """Drain a live queue of ``(job_id, JobParams)`` jobs sequentially.
+
+    Pulls jobs with ``get_nowait()`` until the queue is empty, so jobs appended
+    *while running* are picked up too. Around each job it emits ``job_start`` /
+    ``job_done`` / ``job_cancelled``, and finishes with a single ``queue_done``.
+    ``skip_current`` cancels just the active job; ``cancel`` abandons the rest.
+    """
+    summary = {"done": 0, "skipped": 0, "failed": 0, "cancelled": False, "jobs": 0}
+    index = 0
+    try:
+        while not cancel.is_set():
+            try:
+                job_id, params = job_q.get_nowait()
+            except queue.Empty:
+                break
+
+            index += 1
+            summary["jobs"] += 1
+            skip_current.clear()
+            events.put(Event("job_start", {
+                "id": job_id, "index": index, "name": params.input_path.name,
+            }))
+
+            before = dict(summary)
+            _process_one(params, events, cancel, skip_current, summary)
+
+            if skip_current.is_set() and not cancel.is_set():
+                events.put(Event("job_cancelled", {"id": job_id}))
+            elif summary["failed"] > before["failed"] and (
+                summary["done"] == before["done"]
+            ):
+                events.put(Event("job_error", {
+                    "id": job_id, "message": "see log for details",
+                }))
+            else:
+                events.put(Event("job_done", {"id": job_id}))
+
+        if cancel.is_set():
+            summary["cancelled"] = True
+    finally:
+        events.put(Event("queue_done", summary))
 
 
 def _strip_markup(text: str) -> str:

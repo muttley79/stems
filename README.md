@@ -134,10 +134,24 @@ stems-gui                  # or run stems-gui.bat from anywhere
 ```
 
 Pick an input file or folder, choose a preset (or a raw model override), set the
-output folder/format/device, and click **Separate**. The window stays responsive
-while separation runs on a background thread; a step bar tracks each model pass
-(and animates while weights are downloading), and **Open output folder** reveals
-the results.
+output folder/format/device, and click **Run**. The window stays responsive while
+separation runs on a background thread; a step bar tracks each model pass (and
+animates while weights are downloading), and **Open output folder** reveals the
+results.
+
+Extras:
+
+- **Job queue** — **Add to queue** snapshots the current form as a job (each with
+  its own settings). **Run** processes the queue top-to-bottom; you can keep
+  adding jobs *while it runs* and they're picked up automatically. Each job shows a
+  live elapsed timer and status, with **Cancel task** to drop just the running job
+  (the queue moves on) or **Cancel all** to stop everything after the current file.
+- **Drag-and-drop** a file or folder onto the input box; the **Browse** dialogs
+  remember the last folder you used (persisted across restarts).
+- **Single instance** — launching again brings the existing window to the front.
+- No stray console windows: ffmpeg and the backends run windowless inside the GUI.
+- The GUI runs as a no-console app; pin/shortcut `.venv\Scripts\stems-gui.exe` for
+  a flash-free launch.
 
 ### CLI options (`stems separate`)
 

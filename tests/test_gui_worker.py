@@ -14,7 +14,8 @@ import pytest
 
 from stems import pipeline
 from stems.engines.base import BaseSeparator, SeparationResult
-from stems.gui.worker import JobParams, run_job
+from stems.gui import worker
+from stems.gui.worker import JobParams, run_job, run_jobs
 
 SR = 44100
 
@@ -84,8 +85,9 @@ def test_run_job_reports_missing_input(tmp_path):
 
     events = _drain(q)
     assert events[-1].kind == "batch_done"
-    # A nonexistent file yields no inputs (a clean "nothing to do"), not a crash.
-    assert events[-1].data["failed"] == 0
+    # A nonexistent path is a real error (reported, not a crash) → counts as failed.
+    assert events[-1].data["failed"] == 1
+    assert any(e.kind == "file_error" for e in events)
 
 
 def test_cancel_before_start_skips_work(stub_engines, tmp_path):
@@ -102,3 +104,81 @@ def test_cancel_before_start_skips_work(stub_engines, tmp_path):
     assert events[-1].kind == "batch_done"
     assert events[-1].data["cancelled"] is True
     assert events[-1].data["done"] == 0
+
+
+def _make_job(tmp_path, name):
+    src = tmp_path / name
+    src.write_bytes(b"")
+    return JobParams(
+        input_path=src, output_root=tmp_path / "out", preset="4stem", fmt="wav",
+    )
+
+
+def test_run_jobs_processes_queue_and_aggregates(stub_engines, tmp_path):
+    job_q: "queue.Queue" = queue.Queue()
+    job_q.put((1, _make_job(tmp_path, "a.wav")))
+    job_q.put((2, _make_job(tmp_path, "b.wav")))
+    events_q: "queue.Queue" = queue.Queue()
+
+    run_jobs(job_q, events_q, threading.Event(), threading.Event())
+
+    events = _drain(events_q)
+    kinds = [e.kind for e in events]
+    assert kinds.count("job_start") == 2
+    assert kinds.count("job_done") == 2
+    assert kinds[-1] == "queue_done"
+    assert events[-1].data["done"] == 2          # one stub file per job
+    assert events[-1].data["jobs"] == 2
+
+
+def test_run_jobs_picks_up_job_added_after_start(stub_engines, tmp_path):
+    # Seed one job; a second is "appended" before the worker drains the first.
+    job_q: "queue.Queue" = queue.Queue()
+    job_q.put((1, _make_job(tmp_path, "a.wav")))
+    job_q.put((2, _make_job(tmp_path, "b.wav")))  # stand-in for a live append
+    events_q: "queue.Queue" = queue.Queue()
+
+    run_jobs(job_q, events_q, threading.Event(), threading.Event())
+
+    starts = [e for e in _drain(events_q) if e.kind == "job_start"]
+    assert [e.data["id"] for e in starts] == [1, 2]
+
+
+def test_run_jobs_skip_current_advances_to_next(stub_engines, tmp_path, monkeypatch):
+    # Job 1 is a folder of two files; "cancel task" is simulated by tripping
+    # skip_current after the first file, so the second file is abandoned and the
+    # queue moves on to job 2. (run_jobs clears skip at each job start, so the
+    # flag must be set *during* the job, not before.)
+    folder = tmp_path / "album"
+    folder.mkdir()
+    (folder / "t1.wav").write_bytes(b"")
+    (folder / "t2.wav").write_bytes(b"")
+    job1 = JobParams(
+        input_path=folder, output_root=tmp_path / "out", preset="4stem", fmt="wav",
+    )
+
+    skip = threading.Event()
+    real_sep = worker.separate_file
+    calls = {"n": 0}
+
+    def wrapped(*args, **kwargs):
+        calls["n"] += 1
+        out = real_sep(*args, **kwargs)
+        if calls["n"] == 1:  # after job 1's first file, request a task cancel
+            skip.set()
+        return out
+
+    monkeypatch.setattr(worker, "separate_file", wrapped)
+
+    job_q: "queue.Queue" = queue.Queue()
+    job_q.put((1, job1))
+    job_q.put((2, _make_job(tmp_path, "b.wav")))
+    events_q: "queue.Queue" = queue.Queue()
+
+    run_jobs(job_q, events_q, threading.Event(), skip)
+
+    events = _drain(events_q)
+    kinds = [e.kind for e in events]
+    assert "job_cancelled" in kinds          # job 1 stopped early
+    assert kinds.count("job_start") == 2     # job 2 still ran
+    assert kinds[-1] == "queue_done"

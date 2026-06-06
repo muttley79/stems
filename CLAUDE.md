@@ -43,10 +43,12 @@ src/stems/
 ├── pipeline.py        # separate_to_result()/separate_file(): the orchestrator
 ├── jobs.py            # discover_inputs(), run_batch(): batch + progress + summary
 └── gui/               # optional CustomTkinter desktop front-end (gui extra)
-    ├── __init__.py    # main(): single-instance guard, launches the window
-    ├── app.py         # StemsApp(ctk.CTk): widgets + queue-drained event pump
-    ├── worker.py      # run_job(): background batch runner emitting queue events
-    └── single_instance.py  # loopback-socket guard; a 2nd launch raises the 1st window
+    ├── __init__.py    # main(): console-suppress + single-instance, launches window
+    ├── app.py         # StemsApp(ctk.CTk): widgets, job queue, event pump, timers
+    ├── worker.py      # run_job()/run_jobs(): bg runner(s) emitting queue events
+    ├── settings.py    # load/save_settings(): persisted prefs (last-browsed dirs)
+    ├── single_instance.py  # loopback-socket guard; a 2nd launch raises the 1st window
+    └── _winconsole.py # suppress_child_consoles(): no stray ffmpeg/backend windows
 tests/                 # pytest; backends are stubbed, no models/GPU needed
 ```
 

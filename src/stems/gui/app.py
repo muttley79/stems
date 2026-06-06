@@ -12,15 +12,19 @@ import os
 import queue
 import sys
 import threading
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog
+from typing import Any
 
 import customtkinter as ctk
 
 from stems import __version__
 from stems.audio_io import SUPPORTED_INPUT_SUFFIXES
 from stems.config import DEFAULT_OVERLAP, DEFAULT_SEGMENT
-from stems.gui.worker import Event, JobParams, run_job
+from stems.gui.settings import load_settings, save_settings
+from stems.gui.worker import Event, JobParams, run_job, run_jobs
 from stems.presets import DEFAULT_PRESET, PRESETS
 
 # Optional native file drag-and-drop. tkinterdnd2 wraps the tkdnd Tcl extension;
@@ -39,6 +43,35 @@ _DEVICES = ["auto", "cuda", "cpu"]
 _BITDEPTHS = ["16", "24", "32"]
 _POLL_MS = 100
 _SHOW_POLL_MS = 300  # how often the UI checks for a "come to front" ping
+_TICK_MS = 1000      # elapsed-time refresh interval
+
+# Status → (badge text, colour) for a queued job's row.
+_STATUS_STYLE = {
+    "queued": ("queued", "gray60"),
+    "running": ("running", "#3b8ed0"),
+    "done": ("done", "#2faa5d"),
+    "failed": ("failed", "#d0492b"),
+    "skipped": ("skipped", "gray60"),
+    "cancelled": ("cancelled", "#d98a29"),
+}
+
+
+def _fmt_mmss(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+@dataclass
+class QueuedJob:
+    """One queued separation job plus its row widgets (UI-thread state only)."""
+
+    id: int
+    params: JobParams
+    label: str
+    status: str = "queued"
+    started: float | None = None      # monotonic time the job began
+    elapsed: float | None = None      # final duration once finished
+    widgets: dict[str, Any] = field(default_factory=dict)
 
 # Mix the tkinterdnd2 wrapper into the window only when available, so drop-target
 # registration works on this root; otherwise StemsApp is a plain CTk window.
@@ -52,16 +85,30 @@ class StemsApp(*_APP_BASES):
         super().__init__()
         self._dnd_ready = self._enable_dnd()
         self.title(f"stems · audio separator  (v{__version__})")
-        self.geometry("760x720")
-        self.minsize(680, 640)
+        self.geometry("820x900")
+        self.minsize(720, 800)
         self.grid_columnconfigure(0, weight=1)
 
         # Worker plumbing: a fresh queue + cancel flag are created per run.
         self._events: "queue.Queue[Event]" | None = None
         self._cancel = threading.Event()
+        self._skip_current = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_out_dir: Path | None = None
         self._downloading = False
+
+        # Job queue state (all UI-thread owned).
+        self._queue: list[QueuedJob] = []
+        self._jobs_by_id: dict[int, QueuedJob] = {}
+        self._next_job_id = 0
+        self._job_q: "queue.Queue[tuple[int, JobParams]]" | None = None
+        self._running = False
+        self._current_job_id: int | None = None
+        self._run_started: float | None = None
+        self._ticking = False
+
+        # Persisted prefs (e.g. last-browsed folders for the file dialogs).
+        self._settings = load_settings()
 
         self._build_inputs()
         self._build_plan_controls()
@@ -205,30 +252,43 @@ class StemsApp(*_APP_BASES):
         frame = ctk.CTkFrame(self)
         frame.grid(row=3, column=0, padx=16, pady=(10, 16), sticky="nsew")
         frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(4, weight=1)
+        frame.grid_rowconfigure(5, weight=1)  # queue panel grows
+        frame.grid_rowconfigure(7, weight=1)  # log grows
         self.grid_rowconfigure(3, weight=1)
 
         buttons = ctk.CTkFrame(frame, fg_color="transparent")
         buttons.grid(row=0, column=0, padx=12, pady=8, sticky="ew")
-        self.run_btn = ctk.CTkButton(
-            buttons, text="Separate", command=self._on_run, width=120
+        self.add_btn = ctk.CTkButton(
+            buttons, text="Add to queue", command=self._on_add_to_queue, width=120,
         )
-        self.run_btn.grid(row=0, column=0, padx=(0, 8))
+        self.add_btn.grid(row=0, column=0, padx=(0, 8))
+        self.run_btn = ctk.CTkButton(
+            buttons, text="Run", command=self._on_run, width=90
+        )
+        self.run_btn.grid(row=0, column=1, padx=(0, 8))
         self.cancel_btn = ctk.CTkButton(
-            buttons, text="Cancel", command=self._on_cancel, width=100,
+            buttons, text="Cancel all", command=self._on_cancel, width=100,
             state="disabled", fg_color="gray40",
         )
-        self.cancel_btn.grid(row=0, column=1, padx=(0, 8))
+        self.cancel_btn.grid(row=0, column=2, padx=(0, 8))
         self.open_btn = ctk.CTkButton(
             buttons, text="Open output folder", command=self._open_output,
             width=160, state="disabled",
         )
-        self.open_btn.grid(row=0, column=2)
+        self.open_btn.grid(row=0, column=3)
 
+        status_row = ctk.CTkFrame(frame, fg_color="transparent")
+        status_row.grid(row=1, column=0, padx=12, pady=(2, 0), sticky="ew")
+        status_row.grid_columnconfigure(0, weight=1)
         self.status_var = ctk.StringVar(value="Ready.")
+        ctk.CTkLabel(status_row, textvariable=self.status_var, anchor="w").grid(
+            row=0, column=0, sticky="ew"
+        )
+        self.overall_var = ctk.StringVar(value="")
         ctk.CTkLabel(
-            frame, textvariable=self.status_var, anchor="w",
-        ).grid(row=1, column=0, padx=12, pady=(2, 0), sticky="ew")
+            status_row, textvariable=self.overall_var, anchor="e",
+            text_color="gray60",
+        ).grid(row=0, column=1, sticky="e")
 
         self.step_bar = ctk.CTkProgressBar(frame)
         self.step_bar.set(0)
@@ -238,8 +298,34 @@ class StemsApp(*_APP_BASES):
         self.file_bar.set(0)
         self.file_bar.grid(row=3, column=0, padx=12, pady=(0, 8), sticky="ew")
 
-        self.log = ctk.CTkTextbox(frame, wrap="word")
-        self.log.grid(row=4, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        queue_header = ctk.CTkFrame(frame, fg_color="transparent")
+        queue_header.grid(row=4, column=0, padx=12, pady=(0, 2), sticky="ew")
+        queue_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            queue_header, text="Queue", font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        self.clear_btn = ctk.CTkButton(
+            queue_header, text="Clear", command=self._on_clear_queue, width=70,
+            fg_color="gray40",
+        )
+        self.clear_btn.grid(row=0, column=1, sticky="e")
+
+        self.queue_frame = ctk.CTkScrollableFrame(frame, height=150)
+        self.queue_frame.grid(row=5, column=0, padx=12, pady=(0, 8), sticky="nsew")
+        self.queue_frame.grid_columnconfigure(0, weight=1)
+        self.queue_empty = ctk.CTkLabel(
+            self.queue_frame,
+            text="No jobs queued. Add to queue, or press Run for the form above.",
+            text_color="gray50",
+        )
+        self.queue_empty.grid(row=0, column=0, padx=8, pady=8, sticky="w")
+
+        ctk.CTkLabel(frame, text="Log", anchor="w", text_color="gray60").grid(
+            row=6, column=0, padx=12, sticky="w"
+        )
+        self.log = ctk.CTkTextbox(frame, wrap="word", height=120)
+        self.log.grid(row=7, column=0, padx=12, pady=(0, 12), sticky="nsew")
         self.log.configure(state="disabled")
 
     # ----------------------------------------------------------- drag-and-drop
@@ -279,6 +365,10 @@ class StemsApp(*_APP_BASES):
         if dirs_only and not Path(chosen).is_dir():
             chosen = str(Path(chosen).parent)
         var.set(chosen)
+        # Keep the dialogs' memory in step with drops too.
+        key = "output_dir" if var is self.output_var else "input_dir"
+        directory = chosen if Path(chosen).is_dir() else str(Path(chosen).parent)
+        self._remember(key, directory)
 
     # ------------------------------------------------------ single-instance
 
@@ -315,24 +405,51 @@ class StemsApp(*_APP_BASES):
             text=f"{preset.description}\n→ {', '.join(preset.output_stems)}"
         )
 
+    def _initial_dir(self, key: str, fallback: str | None = None) -> str | None:
+        """Remembered dir for a dialog if it still exists, else fallback/None."""
+        remembered = self._settings.get(key)
+        if remembered and Path(remembered).is_dir():
+            return remembered
+        if fallback and Path(fallback).is_dir():
+            return fallback
+        return None  # None → the dialog uses its own default location
+
+    def _remember(self, key: str, directory) -> None:
+        """Persist a last-used directory for future dialogs."""
+        directory = str(directory)
+        if self._settings.get(key) == directory:
+            return
+        self._settings[key] = directory
+        save_settings(self._settings)
+
     def _pick_file(self) -> None:
         exts = " ".join(f"*{s}" for s in sorted(SUPPORTED_INPUT_SUFFIXES))
         path = filedialog.askopenfilename(
             title="Choose an audio file",
             filetypes=[("Audio", exts), ("All files", "*.*")],
+            initialdir=self._initial_dir("input_dir"),
         )
         if path:
             self.input_var.set(path)
+            self._remember("input_dir", Path(path).parent)
 
     def _pick_folder(self) -> None:
-        path = filedialog.askdirectory(title="Choose a folder of audio")
+        path = filedialog.askdirectory(
+            title="Choose a folder of audio",
+            initialdir=self._initial_dir("input_dir"),
+        )
         if path:
             self.input_var.set(path)
+            self._remember("input_dir", Path(path).parent)
 
     def _pick_output(self) -> None:
-        path = filedialog.askdirectory(title="Choose output folder")
+        path = filedialog.askdirectory(
+            title="Choose output folder",
+            initialdir=self._initial_dir("output_dir", self.output_var.get()),
+        )
         if path:
             self.output_var.set(path)
+            self._remember("output_dir", path)
 
     def _open_output(self) -> None:
         target = self._last_out_dir or Path(self.output_var.get())
@@ -351,25 +468,139 @@ class StemsApp(*_APP_BASES):
         except Exception as exc:
             self._append_log(f"Could not open folder: {exc}")
 
-    def _on_run(self) -> None:
+    # ------------------------------------------------------------------- queue
+
+    def _job_label(self, params: JobParams) -> str:
+        plan = params.model or params.preset or "default"
+        return f"{params.input_path.name}  ·  {plan}"
+
+    def _on_add_to_queue(self) -> None:
         params = self._collect_params()
         if params is None:
             return
+        self._next_job_id += 1
+        job = QueuedJob(
+            id=self._next_job_id, params=params, label=self._job_label(params)
+        )
+        self._queue.append(job)
+        self._jobs_by_id[job.id] = job
+        self._render_job_row(job)
+        # If a run is already in flight, hand the new job to the live worker queue.
+        if self._running and self._job_q is not None:
+            self._job_q.put((job.id, job.params))
 
+    def _render_job_row(self, job: QueuedJob) -> None:
+        self.queue_empty.grid_remove()
+        # Grid at the job's (monotonic) id so rows never collide; removed rows
+        # leave a zero-height gap, which the grid collapses visually.
+        row = ctk.CTkFrame(self.queue_frame)
+        row.grid(row=job.id, column=0, sticky="ew", padx=2, pady=2)
+        row.grid_columnconfigure(0, weight=1)
+        name = ctk.CTkLabel(row, text=job.label, anchor="w")
+        name.grid(row=0, column=0, padx=(8, 6), pady=4, sticky="ew")
+        time_lbl = ctk.CTkLabel(row, text="", width=52, text_color="gray60")
+        time_lbl.grid(row=0, column=1, padx=4)
+        badge = ctk.CTkLabel(row, text="", width=72)
+        badge.grid(row=0, column=2, padx=4)
+        action = ctk.CTkButton(row, text="✕", width=30, fg_color="gray40")
+        action.grid(row=0, column=3, padx=(4, 8))
+        job.widgets = {
+            "row": row, "name": name, "time": time_lbl, "badge": badge,
+            "action": action,
+        }
+        self._set_row_state(job)
+
+    def _set_row_state(self, job: QueuedJob) -> None:
+        text, colour = _STATUS_STYLE.get(job.status, ("queued", "gray60"))
+        job.widgets["badge"].configure(text=text, text_color=colour)
+        action = job.widgets["action"]
+        if job.status == "running":
+            action.configure(
+                text="Cancel task", width=90, fg_color="#a23",
+                command=lambda j=job: self._on_cancel_task(j), state="normal",
+            )
+        elif job.status == "queued":
+            action.configure(
+                text="✕", width=30, fg_color="gray40",
+                command=lambda j=job: self._on_remove_job(j),
+                state="disabled" if self._running else "normal",
+            )
+        else:  # done / failed / skipped / cancelled
+            action.configure(text="✓" if job.status == "done" else "—",
+                             width=30, fg_color="gray30", state="disabled")
+
+    def _on_remove_job(self, job: QueuedJob) -> None:
+        if self._running or job.status != "queued":
+            return
+        job.widgets["row"].destroy()
+        self._queue.remove(job)
+        self._jobs_by_id.pop(job.id, None)
+        if not self._queue:
+            self.queue_empty.grid()
+
+    def _on_clear_queue(self) -> None:
+        if self._running:
+            return
+        for job in list(self._queue):
+            job.widgets["row"].destroy()
+        self._queue.clear()
+        self._jobs_by_id.clear()
+        self.queue_empty.grid()
+
+    def _on_cancel_task(self, job: QueuedJob) -> None:
+        """Cancel just the running job; the queue advances to the next one."""
+        if job.id != self._current_job_id:
+            return
+        self._skip_current.set()
+        self.status_var.set("Cancelling this task…")
+        job.widgets["action"].configure(state="disabled")
+
+    # --------------------------------------------------------------------- run
+
+    def _on_run(self) -> None:
+        pending = [j for j in self._queue if j.status == "queued"]
+        if pending:
+            self._start_queue_run(pending)
+        else:
+            self._start_single_run()
+
+    def _prepare_run(self) -> None:
         self._cancel = threading.Event()
+        self._skip_current = threading.Event()
         self._events = queue.Queue()
         self._last_out_dir = None
+        self._current_job_id = None
+        self._run_started = time.monotonic()
         self._set_running(True)
         self._clear_log()
-        self.status_var.set("Starting…")
         self.step_bar.set(0)
         self.file_bar.set(0)
+        self._arm_ticker()
+        self.after(_POLL_MS, self._drain_events)
 
+    def _start_single_run(self) -> None:
+        params = self._collect_params()
+        if params is None:
+            return
+        self._prepare_run()
+        self.status_var.set("Starting…")
         self._thread = threading.Thread(
             target=run_job, args=(params, self._events, self._cancel), daemon=True
         )
         self._thread.start()
-        self.after(_POLL_MS, self._drain_events)
+
+    def _start_queue_run(self, pending: list[QueuedJob]) -> None:
+        self._prepare_run()
+        self._job_q = queue.Queue()
+        for job in pending:
+            self._job_q.put((job.id, job.params))
+        self.status_var.set(f"Starting queue ({len(pending)} job(s))…")
+        self._thread = threading.Thread(
+            target=run_jobs,
+            args=(self._job_q, self._events, self._cancel, self._skip_current),
+            daemon=True,
+        )
+        self._thread.start()
 
     def _on_cancel(self) -> None:
         self._cancel.set()
@@ -435,9 +666,21 @@ class StemsApp(*_APP_BASES):
             self.after(_POLL_MS, self._drain_events)
 
     def _apply_event(self, ev: Event) -> bool:
-        """Render one event. Returns True when the batch is finished."""
+        """Render one event. Returns True when the run is finished."""
         kind, data = ev.kind, ev.data
-        if kind == "prefetch":
+        if kind == "job_start":
+            self._on_job_start(data)
+        elif kind == "job_done":
+            self._finish_job(data["id"], "done")
+        elif kind == "job_error":
+            self._finish_job(data["id"], "failed")
+        elif kind == "job_cancelled":
+            self._finish_job(data["id"], "cancelled")
+        elif kind == "queue_done":
+            self._end_download()
+            self._finish(data)
+            return True
+        elif kind == "prefetch":
             self._begin_download(data["model"])
         elif kind == "file_start":
             self._end_download()
@@ -474,14 +717,46 @@ class StemsApp(*_APP_BASES):
             return True
         return False
 
+    def _on_job_start(self, data: dict) -> None:
+        job = self._jobs_by_id.get(data["id"])
+        self._current_job_id = data["id"]
+        self.step_bar.set(0)
+        self.file_bar.set(0)
+        if job is not None:
+            job.status = "running"
+            job.started = time.monotonic()
+            job.elapsed = None
+            self._set_row_state(job)
+        self._append_log(f"▶ Job {data['index']}: {data['name']}")
+
+    def _finish_job(self, job_id: int, status: str) -> None:
+        job = self._jobs_by_id.get(job_id)
+        if job is None:
+            return
+        job.status = status
+        if job.started is not None:
+            job.elapsed = time.monotonic() - job.started
+            job.widgets["time"].configure(text=_fmt_mmss(job.elapsed))
+        self._set_row_state(job)
+        if self._current_job_id == job_id:
+            self._current_job_id = None
+
     def _finish(self, summary: dict) -> None:
         self.file_bar.set(1)
         self.step_bar.set(1 if summary.get("done") else 0)
-        msg = (
-            f"Done: {summary.get('done', 0)} separated, "
-            f"{summary.get('skipped', 0)} skipped, "
-            f"{summary.get('failed', 0)} failed."
-        )
+        if "jobs" in summary:
+            msg = (
+                f"Queue done: {summary.get('jobs', 0)} job(s) — "
+                f"{summary.get('done', 0)} files separated, "
+                f"{summary.get('skipped', 0)} skipped, "
+                f"{summary.get('failed', 0)} failed."
+            )
+        else:
+            msg = (
+                f"Done: {summary.get('done', 0)} separated, "
+                f"{summary.get('skipped', 0)} skipped, "
+                f"{summary.get('failed', 0)} failed."
+            )
         if summary.get("cancelled"):
             msg = "Cancelled. " + msg
         self.status_var.set(msg)
@@ -504,12 +779,43 @@ class StemsApp(*_APP_BASES):
             self.step_bar.configure(mode="determinate")
             self.step_bar.set(0)
 
+    # ------------------------------------------------------- elapsed-time ticker
+
+    def _arm_ticker(self) -> None:
+        if not self._ticking:
+            self._ticking = True
+            self._tick()
+
+    def _tick(self) -> None:
+        if not self._ticking:
+            return
+        now = time.monotonic()
+        if self._run_started is not None:
+            self.overall_var.set(f"⏱ {_fmt_mmss(now - self._run_started)}")
+        job = (
+            self._jobs_by_id.get(self._current_job_id)
+            if self._current_job_id is not None else None
+        )
+        if job is not None and job.started is not None and job.status == "running":
+            job.widgets["time"].configure(text=_fmt_mmss(now - job.started))
+        self.after(_TICK_MS, self._tick)
+
+    def _stop_ticker(self) -> None:
+        self._ticking = False
+
     # --------------------------------------------------------------- ui state
 
     def _set_running(self, running: bool) -> None:
+        self._running = running
         self.run_btn.configure(state="disabled" if running else "normal")
         self.cancel_btn.configure(state="normal" if running else "disabled")
+        # Add stays enabled while running (live append); Clear is idle-only.
+        self.clear_btn.configure(state="disabled" if running else "normal")
+        for job in self._queue:  # refresh per-row remove/cancel availability
+            self._set_row_state(job)
         if not running:
+            self._current_job_id = None
+            self._stop_ticker()
             self._end_download()
 
     def _clear_log(self) -> None:
