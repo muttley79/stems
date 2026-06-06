@@ -125,13 +125,17 @@ stems separate --help
 ### Desktop GUI
 
 A desktop GUI (CustomTkinter) is available alongside the CLI — same engine, same
-presets, with live progress and a download indicator. Install the optional extra
-and launch it:
+presets, with live progress and a download indicator. Just run the launcher — on
+its first run it installs the GUI dependencies itself, so there's nothing to
+`pip install` by hand:
 
-```powershell
-pip install -e .[gui]      # adds customtkinter
-stems-gui                  # or run stems-gui.bat from anywhere
 ```
+stems-gui.bat          # from the project folder (double-click or from a terminal)
+```
+
+(The first launch shows a console window while it installs the GUI extras; after
+that it opens straight to the window with no console. If you prefer to install
+manually, `pip install -e .[gui]` then `stems-gui` works too.)
 
 Pick an input file or folder, choose a preset (or a raw model override), set the
 output folder/format/device, and click **Run**. The window stays responsive while
@@ -150,8 +154,8 @@ Extras:
   remember the last folder you used (persisted across restarts).
 - **Single instance** — launching again brings the existing window to the front.
 - No stray console windows: ffmpeg and the backends run windowless inside the GUI.
-- The GUI runs as a no-console app; pin/shortcut `.venv\Scripts\stems-gui.exe` for
-  a flash-free launch.
+- Self-installing: `stems-gui.bat` adds the GUI deps on first run; launches are
+  windowless thereafter (it runs `pythonw -m stems.gui`).
 
 ### CLI options (`stems separate`)
 
