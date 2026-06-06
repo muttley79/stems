@@ -131,6 +131,38 @@ def test_run_jobs_processes_queue_and_aggregates(stub_engines, tmp_path):
     assert events[-1].data["jobs"] == 2
 
 
+def test_run_jobs_always_prefixes_and_continues_numbering(stub_engines, tmp_path):
+    from pathlib import Path
+
+    # Every run is prefixed, and numbering resumes from what's already on disk:
+    # a pre-existing 01_song from a "previous session" pushes new runs to 02/03.
+    src = tmp_path / "song.wav"
+    src.write_bytes(b"")
+    out = tmp_path / "out"
+    (out / "01_song").mkdir(parents=True)  # stand-in for an earlier session
+
+    job_q: "queue.Queue" = queue.Queue()
+    job_q.put((1, JobParams(input_path=src, output_root=out, preset="4stem", fmt="wav")))
+    job_q.put((2, JobParams(input_path=src, output_root=out, preset="4stem", fmt="wav")))
+    events_q: "queue.Queue" = queue.Queue()
+
+    run_jobs(job_q, events_q, threading.Event(), threading.Event())
+
+    done_dirs = [e.data["out_dir"] for e in _drain(events_q) if e.kind == "file_done"]
+    assert [Path(d).name for d in done_dirs] == ["02_song", "03_song"]
+    assert all(Path(d).exists() for d in done_dirs)
+
+
+def test_unique_output_dir_continues_from_disk(tmp_path):
+    from stems.jobs import unique_output_dir
+
+    # No NN_trk folders yet → first is 01_trk.
+    assert unique_output_dir(tmp_path / "trk").name == "01_trk"
+    # Once 01_trk exists on disk, the next is 02_trk (pure existence check).
+    (tmp_path / "01_trk").mkdir()
+    assert unique_output_dir(tmp_path / "trk").name == "02_trk"
+
+
 def test_run_jobs_picks_up_job_added_after_start(stub_engines, tmp_path):
     # Seed one job; a second is "appended" before the worker drains the first.
     job_q: "queue.Queue" = queue.Queue()

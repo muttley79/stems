@@ -33,6 +33,11 @@ class Preset:
     # cascade-only: which model isolates vocals before the residual pass.
     vocal_engine: str = "uvr"
     vocal_model: str = "bs_roformer"
+    # cascade-only: dedicated UVR model used to isolate the guitar stem, replacing
+    # the (weak) guitar head of the demucs pass. Empty = don't run a guitar model.
+    # The audio it runs on is chosen at runtime via ``guitar_source`` (the CLI's
+    # ``--guitar-source``), since no single source is best for every song.
+    guitar_model: str = ""
     # twostem-only: separate ensembles for each stem. Vocals are taken from the
     # vocal models, instrumental from the instrumental models, then each is
     # merged independently — the pro approach to a clean 2-stem split.
@@ -94,6 +99,24 @@ PRESETS: dict[str, Preset] = {
         engine="demucs",
         models=["htdemucs_6s"],
         output_stems=["vocals", "drums", "bass", "guitar", "piano", "other"],
+    ),
+    "6stem-max": Preset(
+        name="6stem-max",
+        description=(
+            "Best 6-stem: clean instrumental ensemble, then htdemucs_6s on it for "
+            "tight drums/bass/other/piano, with the guitar replaced by a dedicated "
+            "Roformer guitar model (+ ensemble vocals). Pick the guitar input with "
+            "--guitar-source (instrumental | no-drums | mix; required)."
+        ),
+        kind="cascade",
+        engine="demucs",
+        models=["htdemucs_6s"],
+        output_stems=["vocals", "drums", "bass", "other", "guitar", "piano"],
+        ensemble_method="average",
+        vocal_method="max_spec",
+        vocal_models=["kim_vocals", "kim_ft", "vocal_fullness"],
+        instrumental_models=["bs_roformer", "inst_v2", "inst_bleedless"],
+        guitar_model="guitar",
     ),
 }
 

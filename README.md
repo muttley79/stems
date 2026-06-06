@@ -27,22 +27,37 @@ follows the source (e.g. a 48 kHz WebM yields 48 kHz stems).
 | `4stem` | vocals, drums, bass, other | Demucs `htdemucs_ft` (single pass) |
 | `4stem-max` | vocals, drums, bass, other | Cascade: ensemble instrumental → Demucs `htdemucs_ft` on the clean instrumental (+ ensemble vocals) |
 | `6stem` | vocals, drums, bass, guitar, piano, other | Demucs `htdemucs_6s` |
+| `6stem-max` | vocals, drums, bass, other, guitar, piano | Cascade: ensemble instrumental → Demucs `htdemucs_6s` for drums/bass/other/piano, with **guitar from a dedicated Roformer guitar model** (+ ensemble vocals). Requires `--guitar-source`. |
 
 - **Ensemble** — runs several models and merges per-stem (waveform average or
   max-spectrogram) for the cleanest possible result.
-- **Cascade** (`4stem-max`) — builds the cleanest instrumental via the dedicated
-  instrumental ensemble, then runs Demucs on *that* (not the raw mix) so vocals
-  never bleed into drums/bass/other. Vocals come from the vocal ensemble and are
-  only computed when requested — `--stems drums,bass,other` skips the vocal
+- **Cascade** (`4stem-max`, `6stem-max`) — builds the cleanest instrumental via the
+  dedicated instrumental ensemble, then runs Demucs on *that* (not the raw mix) so
+  vocals never bleed into drums/bass/other. Vocals come from the vocal ensemble and
+  are only computed when requested — `--stems drums,bass,other` skips the vocal
   passes for speed.
 - **Raw model override** — `--model htdemucs_6s` or `--model bs_roformer` bypasses
   presets for full control.
 
-> **On guitar/piano:** only `6stem` (`htdemucs_6s`) outputs them, and they are
-> weak — it's the single open model that attempts a 6-way split and it sacrifices
-> quality on *every* stem to do so. For usable drums/bass/other, prefer
-> `4stem-max`. Clean guitar/piano isolation is still an unsolved problem in
-> open-source source separation.
+> **On guitar:** `6stem-max` replaces Demucs's weak guitar head with a dedicated
+> Mel-Band Roformer guitar model. No single input is best for every song, so you
+> must pick one with `--guitar-source`:
+> - `instrumental` — vocals removed only (drums/bass kept). Best for **faint /
+>   buried / acoustic** guitar; the Demucs pass never gets to mangle it.
+> - `no-drums` — vocals + drums + bass removed. Best for **prominent / electric**
+>   guitar; kills drum-section bleed (but can drop pure-noise effects like feedback).
+> - `mix` — the original mix untouched (leaves some vocal bleed in the guitar).
+>
+> It's good, not perfect — sparse/percussive passages and pure feedback remain hard.
+> `piano` still comes from `htdemucs_6s` and stays weak.
+
+> **Guitar model setup:** the guitar weights aren't in the `audio-separator`
+> catalog. Place `becruily_guitar.ckpt` + `config_mel_band_roformer_guitar_becruily.yaml`
+> (from [`becruily/mel-band-roformer-guitar`](https://huggingface.co/becruily/mel-band-roformer-guitar))
+> in `models/`, and keep the matching entry under `roformer_download_list` in
+> `models/download_checks.json` (re-add it if that file is ever wiped). The model
+> trains with `mlp_expansion_factor: 1`; `uvr_engine.ensure_roformer_mlp_expansion_patch()`
+> handles that at load time, so no dependency edits are needed.
 
 ---
 
@@ -95,6 +110,10 @@ stems separate song.mp3 -p 4stem-max
 
 # 6 stems (vocals, drums, bass, guitar, piano, other)
 stems separate song.wav out\ --preset 6stem
+
+# Best 6-stem with a dedicated guitar model — pick the guitar input:
+stems separate song.mp3 -p 6stem-max --guitar-source no-drums      # prominent/electric
+stems separate song.mp3 -p 6stem-max --guitar-source instrumental  # faint/acoustic
 
 # Cleanest vocals/instrumental via model ensemble (explicit output dir)
 stems separate song.mp3 out\ -p vocals-max
@@ -150,6 +169,10 @@ Extras:
   adding jobs *while it runs* and they're picked up automatically. Each job shows a
   live elapsed timer and status, with **Cancel task** to drop just the running job
   (the queue moves on) or **Cancel all** to stop everything after the current file.
+- **Numbered output folders** — every GUI run writes to its own `NN_<track>/`
+  folder (`01_song/`, `02_song/`, …), so running the same file again (e.g. with a
+  different preset) never overwrites or mixes into a previous result. Numbering
+  continues from whatever `NN_<track>` folders already exist, even across sessions.
 - **Drag-and-drop** a file or folder onto the input box; the **Browse** dialogs
   remember the last folder you used (persisted across restarts).
 - **Single instance** — launching again brings the existing window to the front.
@@ -163,10 +186,11 @@ Extras:
 |--------|---------|-------------|
 | `INPUT` | — | File or folder to process. |
 | `OUTPUT_DIR` | `output` | Where stems are written. |
-| `-p, --preset` | `vocals-max` | Named plan (`vocals`, `vocals-max`, `4stem`, `4stem-max`, `6stem`). |
+| `-p, --preset` | `vocals-max` | Named plan (`vocals`, `vocals-max`, `4stem`, `4stem-max`, `6stem`, `6stem-max`). |
 | `-m, --model` | — | Raw model override; bypasses preset. |
 | `-e, --engine` | auto | Engine for `--model`: `demucs` or `uvr`. |
 | `--stems` | all | Comma list of stems to keep (e.g. `vocals,drums`). |
+| `--guitar-source` | — | `6stem-max` only (**required**): guitar-model input — `instrumental`, `no-drums`, or `mix`. |
 | `-f, --format` | `both` | `wav`, `mp3`, or `both`. |
 | `--bitdepth` | `24` | WAV bit depth: `16`, `24`, or `32`. |
 | `--device` | `auto` | `auto`, `cuda`, or `cpu`. |

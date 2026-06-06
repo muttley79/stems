@@ -29,7 +29,9 @@ from stems.config import (
     DEFAULT_MP3_BITRATE, DEFAULT_OVERLAP, DEFAULT_SEGMENT, RunConfig,
     resolve_device,
 )
-from stems.jobs import discover_inputs, output_dir_for, outputs_exist
+from stems.jobs import (
+    discover_inputs, output_dir_for, outputs_exist, unique_output_dir,
+)
 from stems.pipeline import (
     Step, iter_required_models, prefetch_models, separate_file,
 )
@@ -52,6 +54,7 @@ class JobParams:
     overlap: float = DEFAULT_OVERLAP
     recursive: bool = False
     skip_existing: bool = False
+    guitar_source: str | None = None
 
 
 @dataclass(slots=True)
@@ -95,6 +98,7 @@ def _process_one(
     cancel: threading.Event,
     skip_current: threading.Event,
     summary: dict,
+    number_outputs: bool = False,
 ) -> None:
     """Run one :class:`JobParams` (which may expand to many files).
 
@@ -103,6 +107,12 @@ def _process_one(
     cooperative flags are checked between files: ``cancel`` (abandon the whole
     run) and ``skip_current`` (stop just this job). A single in-flight file pass
     always finishes first — it cannot be interrupted mid-pass safely.
+
+    When ``number_outputs`` is set, each file gets its own always-numbered folder
+    (``01_<track>``, ``02_<track>``, … continuing from what's already on disk) so
+    repeated or re-run inputs never overwrite a previous result. The queue turns
+    this on; jobs run sequentially, so a folder is written before the next file's
+    number is chosen.
     """
     try:
         config = RunConfig(
@@ -142,6 +152,8 @@ def _process_one(
                 break
 
             out_dir = output_dir_for(f, params.input_path, params.output_root)
+            if number_outputs:
+                out_dir = unique_output_dir(out_dir)
             events.put(Event(
                 "file_start",
                 {"name": f.name, "path": str(f), "index": idx, "total": total},
@@ -163,7 +175,7 @@ def _process_one(
                     f, out_dir, config,
                     preset=params.preset, engine=params.engine,
                     model=params.model, stems=params.stems, fmt=params.fmt,
-                    on_step=on_step,
+                    on_step=on_step, guitar_source=params.guitar_source,
                 )
                 summary["done"] += 1
                 events.put(Event("file_done", {
@@ -232,7 +244,9 @@ def run_jobs(
             }))
 
             before = dict(summary)
-            _process_one(params, events, cancel, skip_current, summary)
+            _process_one(
+                params, events, cancel, skip_current, summary, number_outputs=True
+            )
 
             if skip_current.is_set() and not cancel.is_set():
                 events.put(Event("job_cancelled", {"id": job_id}))

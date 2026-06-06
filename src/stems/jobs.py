@@ -9,6 +9,7 @@ support, and a final summary. Output mirrors the input folder structure:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,6 +68,27 @@ def outputs_exist(out_dir: Path) -> bool:
     return any(out_dir.glob("*.wav")) or any(out_dir.glob("*.mp3"))
 
 
+def unique_output_dir(out_dir: Path) -> Path:
+    """Return a fresh, always-prefixed per-track output dir (``NN_<name>``).
+
+    Scan the target parent for existing ``NN_<name>`` folders and use the next
+    number (``01_`` if there are none). So the same input run again — now or any
+    time later — gets a new folder instead of overwriting the previous result; it
+    just continues the sequence already on disk.
+    """
+    parent = out_dir.parent
+    name = out_dir.name
+    pattern = re.compile(rf"^(\d+)_{re.escape(name)}$")
+
+    highest = 0
+    if parent.is_dir():
+        for child in parent.iterdir():
+            m = pattern.match(child.name)
+            if m:
+                highest = max(highest, int(m.group(1)))
+    return parent / f"{highest + 1:02d}_{name}"
+
+
 def run_batch(
     input_path: Path,
     output_root: Path,
@@ -78,6 +100,7 @@ def run_batch(
     fmt: str = "both",
     recursive: bool = False,
     skip_existing: bool = False,
+    guitar_source: str | None = None,
 ) -> list[JobResult]:
     """Process all discovered inputs; returns one :class:`JobResult` per file."""
     input_path = Path(input_path)
@@ -147,6 +170,7 @@ def run_batch(
                     f, out_dir, config,
                     preset=preset, engine=engine, model=model,
                     stems=stems, fmt=fmt, on_step=on_step,
+                    guitar_source=guitar_source,
                 )
                 results.append(JobResult(f, out_dir, written=written))
                 progress.update(

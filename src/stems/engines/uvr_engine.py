@@ -39,6 +39,10 @@ MODEL_FILES: dict[str, str] = {
     # Best dedicated INSTRUMENTAL models (instrumental target / low vocal bleed).
     "inst_v2": "melband_roformer_inst_v2.ckpt",               # 16.06 instrumental
     "inst_bleedless": "mel_band_roformer_instrumental_bleedless_v2_gabox.ckpt",
+    # Dedicated GUITAR model (Mel-Band Roformer, target=guitar). Community model;
+    # registered via models/download_checks.json. Needs the mlp_expansion_factor
+    # shim below to load on older audio-separator builds.
+    "guitar": "becruily_guitar.ckpt",
 }
 
 # 2-stem models output vocals + instrumental.
@@ -54,15 +58,61 @@ _STEM_KEYWORDS = [
     ("vocal", "vocals"),
     ("drums", "drums"),
     ("bass", "bass"),
-    ("other", "other"),
+    # Check specific instruments before the generic "other": a guitar/piano file
+    # tagged like "..._(Guitar)..." must not be swallowed by an "other" match.
     ("guitar", "guitar"),
     ("piano", "piano"),
+    ("other", "other"),
 ]
 
 
 def resolve_model_file(model: str) -> str:
     """Map a friendly alias to a checkpoint filename (pass through if unknown)."""
     return MODEL_FILES.get(model, model)
+
+
+def ensure_roformer_mlp_expansion_patch() -> None:
+    """Let ``MelBandRoformer`` accept a config ``mlp_expansion_factor``.
+
+    Older ``audio-separator`` builds hardcode the mask-estimator MLP expansion
+    (4) and don't accept it as a constructor kwarg, so a Roformer checkpoint
+    trained with a different value (e.g. the becruily guitar model, which ships
+    ``mlp_expansion_factor: 1`` in its config) fails to load with
+    ``unexpected keyword argument 'mlp_expansion_factor'``. We wrap the
+    constructor to consume that kwarg and thread it into each ``MaskEstimator``
+    (whose own ``__init__`` already supports it) — matching newer
+    audio-separator behavior without editing the installed package. Idempotent,
+    lazy, and a no-op for configs that omit the key (default 4 = original
+    behavior), so it never affects the other models.
+    """
+    try:  # lazy: only touch the heavy backend when actually separating
+        from audio_separator.separator.uvr_lib_v5.roformer import (
+            mel_band_roformer as mbr,
+        )
+    except Exception:
+        return  # backend not importable here; nothing to patch
+
+    if getattr(mbr.MelBandRoformer.__init__, "_stems_mlp_patch", False):
+        return
+
+    orig_model_init = mbr.MelBandRoformer.__init__
+    orig_mask_init = mbr.MaskEstimator.__init__
+
+    def model_init(self, *args, mlp_expansion_factor=4, **kwargs):
+        # While the real constructor builds its MaskEstimators (without passing
+        # the factor), temporarily inject our value as the MaskEstimator default.
+        def mask_init(mask_self, *m_args, **m_kwargs):
+            m_kwargs.setdefault("mlp_expansion_factor", mlp_expansion_factor)
+            orig_mask_init(mask_self, *m_args, **m_kwargs)
+
+        mbr.MaskEstimator.__init__ = mask_init
+        try:
+            orig_model_init(self, *args, **kwargs)
+        finally:
+            mbr.MaskEstimator.__init__ = orig_mask_init
+
+    model_init._stems_mlp_patch = True
+    mbr.MelBandRoformer.__init__ = model_init
 
 
 @contextlib.contextmanager
@@ -115,6 +165,7 @@ class UvrSeparator(BaseSeparator):
     ) -> SeparationResult:
         from audio_separator.separator import Separator  # lazy import
 
+        ensure_roformer_mlp_expansion_patch()
         model_file = resolve_model_file(model)
         config.ensure_dirs()
 

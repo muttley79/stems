@@ -25,6 +25,7 @@ from stems.audio_io import SUPPORTED_INPUT_SUFFIXES
 from stems.config import DEFAULT_OVERLAP, DEFAULT_SEGMENT
 from stems.gui.settings import load_settings, save_settings
 from stems.gui.worker import Event, JobParams, run_jobs
+from stems.pipeline import GUITAR_SOURCES
 from stems.presets import DEFAULT_PRESET, PRESETS
 
 # Optional native file drag-and-drop. tkinterdnd2 wraps the tkdnd Tcl extension;
@@ -221,9 +222,22 @@ class StemsApp(*_APP_BASES):
         ctk.CTkCheckBox(
             flags, text="Recurse into subfolders", variable=self.recursive_var
         ).grid(row=0, column=0, padx=(0, 20))
-        self.skip_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            flags, text="Skip files with existing output", variable=self.skip_var
+        # No "skip existing" control: every run writes a fresh numbered folder
+        # (NN_<track>/), so there is never a pre-existing output to skip.
+
+        # Guitar-source picker — only meaningful for guitar-bearing presets
+        # (6stem-max); shown/hidden by _on_preset_change.
+        self.guitar_row = ctk.CTkFrame(frame, fg_color="transparent")
+        self.guitar_row.grid(
+            row=5, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="w"
+        )
+        ctk.CTkLabel(self.guitar_row, text="Guitar source").grid(
+            row=0, column=0, padx=(0, 6)
+        )
+        self.guitar_source_var = ctk.StringVar(value="instrumental")
+        ctk.CTkSegmentedButton(
+            self.guitar_row, values=list(GUITAR_SOURCES),
+            variable=self.guitar_source_var,
         ).grid(row=0, column=1)
 
         self._on_preset_change(DEFAULT_PRESET)
@@ -404,6 +418,10 @@ class StemsApp(*_APP_BASES):
         self.preset_desc.configure(
             text=f"{preset.description}\n→ {', '.join(preset.output_stems)}"
         )
+        if getattr(preset, "guitar_model", ""):
+            self.guitar_row.grid()
+        else:
+            self.guitar_row.grid_remove()
 
     def _initial_dir(self, key: str, fallback: str | None = None) -> str | None:
         """Remembered dir for a dialog if it still exists, else fallback/None."""
@@ -618,6 +636,10 @@ class StemsApp(*_APP_BASES):
         output_root = Path(self.output_var.get().strip() or "output")
         model = self.model_var.get().strip() or None
         preset = None if model else self.preset_var.get()
+        # Only forward a guitar source for presets that actually use one.
+        guitar_source = None
+        if preset and getattr(PRESETS.get(preset), "guitar_model", ""):
+            guitar_source = self.guitar_source_var.get()
 
         segment_text = self.segment_var.get().strip()
         try:
@@ -640,7 +662,8 @@ class StemsApp(*_APP_BASES):
             segment=segment,
             overlap=overlap,
             recursive=self.recursive_var.get(),
-            skip_existing=self.skip_var.get(),
+            skip_existing=False,  # GUI always writes a fresh numbered folder
+            guitar_source=guitar_source,
         )
 
     # -------------------------------------------------------------- event pump

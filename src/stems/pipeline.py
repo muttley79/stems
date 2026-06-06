@@ -140,28 +140,58 @@ def _run_twostem(
     return SeparationResult(stems=merged, sample_rate=sr)
 
 
+#: Valid inputs for the dedicated guitar model in a guitar-bearing cascade
+#: (``6stem-max``). No single source wins every song, so the user must pick:
+#:   - ``instrumental`` — vocals removed only (drums/bass kept): best for faint /
+#:     buried / acoustic guitars; the Demucs pass never touches the guitar.
+#:   - ``no-drums``     — vocals + drums + bass removed: best for prominent /
+#:     electric guitars; kills drum-section bleed.
+#:   - ``mix``          — the original mix untouched (leaves vocal bleed in).
+GUITAR_SOURCES = ("instrumental", "no-drums", "mix")
+
+
 def _run_cascade(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
-    on_step: StepCallback | None = None,
+    on_step: StepCallback | None = None, guitar_source: str | None = None,
 ) -> SeparationResult:
-    """Best 4-stem: build the cleanest instrumental (ensemble of dedicated
-    instrumental models), then run Demucs on it for drums/bass/other. Vocals come
-    from the vocal-model ensemble and are only computed when actually requested,
-    so ``--stems drums,bass,other`` skips the vocal passes entirely.
+    """Cascade: build the cleanest instrumental (ensemble of dedicated
+    instrumental models), then run Demucs on it for the non-vocal stems. Vocals
+    come from the vocal-model ensemble and are only computed when requested, so
+    ``--stems drums,bass,other`` skips the vocal passes entirely.
+
+    For a guitar-bearing preset (``preset.guitar_model`` set, e.g. ``6stem-max``)
+    the Demucs guitar head is replaced by a dedicated Roformer guitar model run
+    on the audio chosen by ``guitar_source`` (see :data:`GUITAR_SOURCES`).
     """
+    # Non-vocal stems this preset's demucs model yields (drums/bass/other, plus
+    # guitar/piano for the 6-stem model). Backward compatible: for 4stem-max this
+    # is exactly ("drums","bass","other").
+    demucs_stems = tuple(s for s in preset.output_stems if s != "vocals")
+    nonguitar_stems = tuple(s for s in demucs_stems if s != "guitar")
+
     want_vocals = stems is None or "vocals" in stems
-    drum_stems = ("drums", "bass", "other")
-    want_drumset = stems is None or any(s in stems for s in drum_stems)
+    want_nonguitar = stems is None or any(s in stems for s in nonguitar_stems)
+    want_guitar = bool(preset.guitar_model) and "guitar" in demucs_stems and (
+        stems is None or "guitar" in stems
+    )
+    if want_guitar and guitar_source not in GUITAR_SOURCES:
+        raise ValueError(
+            f"preset '{preset.name}' needs a guitar source; pass one of "
+            f"{' | '.join(GUITAR_SOURCES)} (CLI: --guitar-source)."
+        )
+    # Demucs is needed for its non-guitar stems, and also to obtain drums/bass
+    # when the guitar model runs on a 'no-drums' bed.
+    need_demucs = want_nonguitar or (want_guitar and guitar_source == "no-drums")
 
     total = (
         len(preset.instrumental_models)
         + (len(preset.vocal_models) if want_vocals else 0)
-        + (1 if want_drumset else 0)
+        + (1 if need_demucs else 0)
+        + (1 if want_guitar else 0)
     )
     tracker = _StepTracker(on_step, total)
 
     merged: dict[str, np.ndarray] = {}
-    sr = 44100
 
     # Clean instrumental via the strong instrumental ensemble (same quality as
     # the 'amazing' vocals-max instrumental).
@@ -179,22 +209,63 @@ def _run_cascade(
         )
         merged["vocals"] = voc.stems["vocals"]
 
-    if want_drumset:
-        # Demucs 4-stem on the clean instrumental -> tight drums/bass/other.
+    if need_demucs or want_guitar:
         with tempfile.TemporaryDirectory() as tmp:
             residual_path = Path(tmp) / "residual.wav"
             write_wav(residual_path, instrumental, sr, bitdepth=32)
-            tracker.begin(preset.models[0], "splitting drums/bass/other")
-            demucs_res = get_engine(preset.engine).separate(
-                residual_path, preset.models[0], config, stems=None
-            )
-        for name in drum_stems:
-            if name in demucs_res.stems:
-                merged[name] = demucs_res.stems[name]
+
+            demucs_res: SeparationResult | None = None
+            if need_demucs:
+                tracker.begin(preset.models[0], "splitting drums/bass/other")
+                demucs_res = get_engine(preset.engine).separate(
+                    residual_path, preset.models[0], config, stems=None
+                )
+                for name in demucs_stems:
+                    if name in demucs_res.stems:
+                        merged[name] = demucs_res.stems[name]
+
+            if want_guitar:
+                gtr_input = _guitar_source_path(
+                    guitar_source, audio_path, residual_path, instrumental,
+                    demucs_res, sr, tmp,
+                )
+                tracker.begin(preset.guitar_model, "isolating guitar")
+                g = get_engine("uvr").separate(
+                    gtr_input, preset.guitar_model, config, stems=["guitar"]
+                )
+                if "guitar" in g.stems:  # override the weak demucs guitar
+                    merged["guitar"] = g.stems["guitar"]
 
     if stems:
         merged = {k: v for k, v in merged.items() if k in stems}
     return SeparationResult(stems=merged, sample_rate=sr)
+
+
+def _guitar_source_path(
+    source: str, audio_path: Path, residual_path: Path,
+    instrumental: np.ndarray, demucs_res: SeparationResult | None,
+    sr: int, tmp: str,
+) -> Path:
+    """Resolve the audio file the guitar model should run on for ``source``.
+
+    Uses a neutral temp filename (``harmonic.wav``) for the computed bed so the
+    UVR filename-based stem classifier can't mistake it for another stem.
+    """
+    if source == "mix":
+        return audio_path
+    if source == "instrumental":
+        return residual_path  # the clean instrumental, already on disk
+    if source == "no-drums":
+        bed = instrumental.copy()
+        for name in ("drums", "bass"):
+            arr = demucs_res.stems.get(name) if demucs_res else None
+            if arr is not None:
+                n = min(bed.shape[-1], arr.shape[-1])
+                bed[..., :n] -= arr[..., :n]
+        bed_path = Path(tmp) / "harmonic.wav"
+        write_wav(bed_path, bed, sr, bitdepth=32)
+        return bed_path
+    raise ValueError(f"unknown guitar source: {source}")
 
 
 def separate_to_result(
@@ -205,12 +276,14 @@ def separate_to_result(
     model: str | None = None,
     stems: list[str] | None = None,
     on_step: StepCallback | None = None,
+    guitar_source: str | None = None,
 ) -> SeparationResult:
     """Resolve the plan and produce stems in memory.
 
     Precedence: an explicit ``model`` (with optional ``engine``) overrides the
     preset. Otherwise the named ``preset`` plan runs. ``on_step`` is invoked
-    before each model pass for progress reporting.
+    before each model pass for progress reporting. ``guitar_source`` selects the
+    audio fed to the dedicated guitar model in a guitar-bearing cascade.
     """
     if model is not None:
         eng = engine or _infer_engine_for_model(model)
@@ -224,7 +297,7 @@ def separate_to_result(
     if p.kind == "twostem":
         return _run_twostem(audio_path, p, config, stems, on_step)
     if p.kind == "cascade":
-        return _run_cascade(audio_path, p, config, stems, on_step)
+        return _run_cascade(audio_path, p, config, stems, on_step, guitar_source)
     raise ValueError(f"Unsupported preset kind: {p.kind}")
 
 
@@ -238,10 +311,11 @@ def separate_file(
     stems: list[str] | None = None,
     fmt: str = "both",
     on_step: StepCallback | None = None,
+    guitar_source: str | None = None,
 ) -> list[Path]:
     """Separate ``audio_path`` and write stems into ``out_dir``. Returns paths."""
     result = separate_to_result(
-        audio_path, config, preset, engine, model, stems, on_step
+        audio_path, config, preset, engine, model, stems, on_step, guitar_source
     )
     written: list[Path] = []
     for name, audio in result.stems.items():
@@ -282,6 +356,8 @@ def iter_required_models(
         pairs += [("uvr", m) for m in p.instrumental_models]
         pairs += [("uvr", m) for m in p.vocal_models]
         pairs.append((p.engine, p.models[0]))
+        if p.guitar_model:
+            pairs.append(("uvr", p.guitar_model))
 
     seen: set[tuple[str, str]] = set()
     uniq: list[tuple[str, str]] = []
@@ -327,8 +403,11 @@ def _say_downloading(console, model: str) -> None:
 
 
 def _prefetch_uvr(model: str, config: RunConfig, console) -> None:
-    from stems.engines.uvr_engine import resolve_model_file
+    from stems.engines.uvr_engine import (
+        ensure_roformer_mlp_expansion_patch, resolve_model_file,
+    )
 
+    ensure_roformer_mlp_expansion_patch()
     ckpt = config.model_dir / resolve_model_file(model)
     if ckpt.exists():
         return

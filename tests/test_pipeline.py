@@ -47,6 +47,8 @@ def stub_engines(monkeypatch):
         "vocal_fullness": {"vocals": 0.5, "other": 0.9},
         "inst_v2": {"instrumental": 0.3, "vocals": 0.9},
         "inst_bleedless": {"instrumental": 0.2, "vocals": 0.9},
+        # Dedicated guitar model: distinct value so an override is provable.
+        "guitar": {"guitar": 0.7, "other": 0.1},
     })
     demucs = FakeEngine("demucs", {
         "htdemucs_ft": {"vocals": 0.0, "drums": 0.2, "bass": 0.4, "other": 0.6},
@@ -91,6 +93,36 @@ def test_cascade_preset_uses_roformer_vocals(stub_engines, tmp_path):
     # vocals come from the vocal ensemble (not Demucs's empty 0.0 vocals)
     assert np.isfinite(res.stems["vocals"]).all()
     assert np.any(res.stems["vocals"] != 0.0)
+
+
+def test_6stem_max_overrides_guitar(stub_engines, tmp_path):
+    cfg = RunConfig(device="cpu")
+    res = pipeline.separate_to_result(
+        tmp_path / "x.wav", cfg, preset="6stem-max", guitar_source="instrumental"
+    )
+    assert set(res.stems) == {"vocals", "drums", "bass", "other", "guitar", "piano"}
+    # guitar comes from the dedicated guitar model (0.7), not htdemucs_6s (0.8)
+    assert np.allclose(res.stems["guitar"], 0.7)
+    # piano still comes from the htdemucs_6s pass
+    assert np.allclose(res.stems["piano"], 0.9)
+    # vocals from the ensemble (not Demucs's empty 0.0 vocals)
+    assert np.any(res.stems["vocals"] != 0.0)
+
+
+def test_6stem_max_requires_guitar_source(stub_engines, tmp_path):
+    cfg = RunConfig(device="cpu")
+    with pytest.raises(ValueError):
+        pipeline.separate_to_result(tmp_path / "x.wav", cfg, preset="6stem-max")
+
+
+def test_6stem_max_no_drums_source(stub_engines, tmp_path):
+    # The 'no-drums' bed is built from instrumental minus demucs drums/bass and
+    # written to a temp wav; the guitar still resolves from the guitar model.
+    cfg = RunConfig(device="cpu")
+    res = pipeline.separate_to_result(
+        tmp_path / "x.wav", cfg, preset="6stem-max", guitar_source="no-drums"
+    )
+    assert np.allclose(res.stems["guitar"], 0.7)
 
 
 def test_stems_filter(stub_engines, tmp_path):

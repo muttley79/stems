@@ -36,7 +36,8 @@ from stems.config import (
 from stems.engines.demucs_engine import _MODEL_STEMS as DEMUCS_MODELS
 from stems.engines.uvr_engine import MODEL_FILES as UVR_MODELS
 from stems.jobs import run_batch
-from stems.presets import DEFAULT_PRESET, PRESETS
+from stems.pipeline import GUITAR_SOURCES
+from stems.presets import DEFAULT_PRESET, PRESETS, get_preset
 
 app = typer.Typer(
     add_completion=False,
@@ -82,6 +83,14 @@ def separate(
     stems: Optional[str] = typer.Option(
         None, "--stems", help="Comma-separated stems to keep (e.g. vocals,drums)."
     ),
+    guitar_source: Optional[str] = typer.Option(
+        None, "--guitar-source",
+        help=(
+            "For 6stem-max: audio fed to the guitar model — instrumental "
+            "(faint/acoustic) | no-drums (prominent/electric) | mix. Required for "
+            "that preset."
+        ),
+    ),
     fmt: str = typer.Option(
         "both", "--format", "-f", help="Output format: wav | mp3 | both."
     ),
@@ -109,6 +118,18 @@ def separate(
         raise typer.BadParameter("--format must be wav, mp3, or both")
     if model is None and preset is None:
         preset = DEFAULT_PRESET
+
+    if guitar_source is not None and guitar_source not in GUITAR_SOURCES:
+        raise typer.BadParameter(
+            f"--guitar-source must be one of {', '.join(GUITAR_SOURCES)}"
+        )
+    # A guitar-bearing preset needs an explicit source (no sensible default).
+    if model is None and preset and get_preset(preset).guitar_model \
+            and guitar_source is None:
+        raise typer.BadParameter(
+            f"preset '{preset}' requires --guitar-source "
+            f"({' | '.join(GUITAR_SOURCES)})."
+        )
 
     resolved_device = resolve_device(device)
     stem_list = [s.strip() for s in stems.split(",")] if stems else None
@@ -138,6 +159,7 @@ def separate(
         fmt=fmt,
         recursive=recursive,
         skip_existing=skip_existing,
+        guitar_source=guitar_source,
     )
 
 
