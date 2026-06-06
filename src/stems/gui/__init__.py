@@ -18,7 +18,12 @@ def main() -> None:
     If a window is already open, this signals it to come to the front and exits
     instead of opening a second one.
     """
+    from stems.gui._winconsole import suppress_child_consoles
     from stems.gui.single_instance import acquire_or_signal
+
+    # Before anything can spawn a child (ffmpeg, backends): keep child consoles
+    # hidden so this windowless GUI process never flashes stray black windows.
+    suppress_child_consoles()
 
     server = acquire_or_signal()
     if server is None:

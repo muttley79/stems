@@ -1,29 +1,25 @@
 @echo off
 rem ---------------------------------------------------------------------------
-rem  stems-gui.bat - launch the stems desktop GUI inside the project venv
-rem  without having to activate it yourself. Mirrors stems.bat. Because the GUI
-rem  is a gui-script (pythonw), no console window is attached.
+rem  stems-gui.bat - launch the stems desktop GUI from the project venv.
+rem
+rem  stems-gui.exe is a gui-script (pythonw) whose launcher already embeds the
+rem  venv interpreter, so there is no need to activate the venv. We just `start`
+rem  it detached and exit immediately, so this cmd window closes at once instead
+rem  of lingering. For a truly flash-free launch, make a shortcut straight to
+rem  .venv\Scripts\stems-gui.exe (no console host at all).
 rem
 rem  Usage (from anywhere):
 rem      stems-gui.bat
 rem ---------------------------------------------------------------------------
 setlocal
 
-set "VENV=%~dp0.venv\Scripts"
+set "GUI=%~dp0.venv\Scripts\stems-gui.exe"
 
-if not exist "%VENV%\activate.bat" (
-    echo [stems-gui.bat] venv not found at "%VENV%". Create it first.
-    exit /b 1
-)
-
-if not exist "%VENV%\stems-gui.exe" (
+if not exist "%GUI%" (
     echo [stems-gui.bat] stems-gui not installed. Run: pip install -e .[gui]
     exit /b 1
 )
 
-call "%VENV%\activate.bat"
-rem Launch the GUI by full path so this never re-invokes stems-gui.bat.
-start "" "%VENV%\stems-gui.exe" %*
-call "%VENV%\deactivate.bat"
+start "" "%GUI%" %*
 
 endlocal & exit /b 0
