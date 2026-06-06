@@ -24,7 +24,7 @@ from stems import __version__
 from stems.audio_io import SUPPORTED_INPUT_SUFFIXES
 from stems.config import DEFAULT_OVERLAP, DEFAULT_SEGMENT
 from stems.gui.settings import load_settings, save_settings
-from stems.gui.worker import Event, JobParams, run_job, run_jobs
+from stems.gui.worker import Event, JobParams, run_jobs
 from stems.presets import DEFAULT_PRESET, PRESETS
 
 # Optional native file drag-and-drop. tkinterdnd2 wraps the tkdnd Tcl extension;
@@ -475,9 +475,13 @@ class StemsApp(*_APP_BASES):
         return f"{params.input_path.name}  ·  {plan}"
 
     def _on_add_to_queue(self) -> None:
+        self._enqueue_current()
+
+    def _enqueue_current(self) -> bool:
+        """Snapshot the current form as a queued job. Returns False if invalid."""
         params = self._collect_params()
         if params is None:
-            return
+            return False
         self._next_job_id += 1
         job = QueuedJob(
             id=self._next_job_id, params=params, label=self._job_label(params)
@@ -488,6 +492,7 @@ class StemsApp(*_APP_BASES):
         # If a run is already in flight, hand the new job to the live worker queue.
         if self._running and self._job_q is not None:
             self._job_q.put((job.id, job.params))
+        return True
 
     def _render_job_row(self, job: QueuedJob) -> None:
         self.queue_empty.grid_remove()
@@ -559,10 +564,13 @@ class StemsApp(*_APP_BASES):
 
     def _on_run(self) -> None:
         pending = [j for j in self._queue if j.status == "queued"]
-        if pending:
-            self._start_queue_run(pending)
-        else:
-            self._start_single_run()
+        if not pending:
+            # Nothing queued: snapshot the current form as a one-off job so Run
+            # always produces a job row (with its own status + timer).
+            if not self._enqueue_current():
+                return
+            pending = [j for j in self._queue if j.status == "queued"]
+        self._start_queue_run(pending)
 
     def _prepare_run(self) -> None:
         self._cancel = threading.Event()
@@ -578,23 +586,13 @@ class StemsApp(*_APP_BASES):
         self._arm_ticker()
         self.after(_POLL_MS, self._drain_events)
 
-    def _start_single_run(self) -> None:
-        params = self._collect_params()
-        if params is None:
-            return
-        self._prepare_run()
-        self.status_var.set("Starting…")
-        self._thread = threading.Thread(
-            target=run_job, args=(params, self._events, self._cancel), daemon=True
-        )
-        self._thread.start()
-
     def _start_queue_run(self, pending: list[QueuedJob]) -> None:
         self._prepare_run()
         self._job_q = queue.Queue()
         for job in pending:
             self._job_q.put((job.id, job.params))
-        self.status_var.set(f"Starting queue ({len(pending)} job(s))…")
+        plural = "job" if len(pending) == 1 else "jobs"
+        self.status_var.set(f"Starting {len(pending)} {plural}…")
         self._thread = threading.Thread(
             target=run_jobs,
             args=(self._job_q, self._events, self._cancel, self._skip_current),
