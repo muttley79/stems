@@ -38,6 +38,7 @@ _FORMATS = ["both", "wav", "mp3"]
 _DEVICES = ["auto", "cuda", "cpu"]
 _BITDEPTHS = ["16", "24", "32"]
 _POLL_MS = 100
+_SHOW_POLL_MS = 300  # how often the UI checks for a "come to front" ping
 
 # Mix the tkinterdnd2 wrapper into the window only when available, so drop-target
 # registration works on this root; otherwise StemsApp is a plain CTk window.
@@ -47,7 +48,7 @@ _APP_BASES = (ctk.CTk, TkinterDnD.DnDWrapper) if _DND_AVAILABLE else (ctk.CTk,)
 class StemsApp(*_APP_BASES):
     """Main application window."""
 
-    def __init__(self) -> None:
+    def __init__(self, single_instance=None) -> None:
         super().__init__()
         self._dnd_ready = self._enable_dnd()
         self.title(f"stems · audio separator  (v{__version__})")
@@ -66,6 +67,14 @@ class StemsApp(*_APP_BASES):
         self._build_plan_controls()
         self._build_advanced()
         self._build_run_area()
+
+        # When another launch pings the single-instance server, raise this window
+        # to the front. The server flag is set from a socket thread; we poll it
+        # here on the main thread so the actual raise stays main-thread-safe.
+        self._single_instance = single_instance
+        if single_instance is not None:
+            single_instance.start()
+            self.after(_SHOW_POLL_MS, self._poll_show_request)
 
     # ----------------------------------------------------------------- layout
 
@@ -270,6 +279,30 @@ class StemsApp(*_APP_BASES):
         if dirs_only and not Path(chosen).is_dir():
             chosen = str(Path(chosen).parent)
         var.set(chosen)
+
+    # ------------------------------------------------------ single-instance
+
+    def _poll_show_request(self) -> None:
+        """Bring this window forward if another launch asked us to; re-arm."""
+        si = self._single_instance
+        if si is None:
+            return
+        if si.consume_show_request():
+            self._bring_to_front()
+        self.after(_SHOW_POLL_MS, self._poll_show_request)
+
+    def _bring_to_front(self) -> None:
+        """Restore, raise, and briefly pin the window above others."""
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            # A momentary topmost toggle is the reliable way to steal foreground
+            # on Windows without leaving the window permanently on top.
+            self.attributes("-topmost", True)
+            self.after(300, lambda: self.attributes("-topmost", False))
+        except Exception:
+            pass
 
     # --------------------------------------------------------------- handlers
 

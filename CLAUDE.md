@@ -46,7 +46,7 @@ src/stems/
     ├── __init__.py    # main(): single-instance guard, launches the window
     ├── app.py         # StemsApp(ctk.CTk): widgets + queue-drained event pump
     ├── worker.py      # run_job(): background batch runner emitting queue events
-    └── single_instance.py  # OS file lock so only one GUI window runs at a time
+    └── single_instance.py  # loopback-socket guard; a 2nd launch raises the 1st window
 tests/                 # pytest; backends are stubbed, no models/GPU needed
 ```
 
