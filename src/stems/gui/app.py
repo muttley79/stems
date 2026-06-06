@@ -42,6 +42,11 @@ except Exception:  # pragma: no cover - optional dependency
 _FORMATS = ["both", "wav", "mp3"]
 _DEVICES = ["auto", "cuda", "cpu"]
 _BITDEPTHS = ["16", "24", "32"]
+# Vocal-ensemble merge for the "-max" presets (label shown → pipeline value).
+# Max-spec keeps a fuller, less-gated vocal; Average is smoother (no chance of
+# the merge flutter). Insertion order = button order; first is the default.
+_VOCAL_BLENDS = {"Max-spec (full)": "max_spec", "Average (smooth)": "average"}
+_DEFAULT_VOCAL_BLEND = next(iter(_VOCAL_BLENDS))
 _POLL_MS = 100
 _SHOW_POLL_MS = 300  # how often the UI checks for a "come to front" ping
 _TICK_MS = 1000      # elapsed-time refresh interval
@@ -240,6 +245,21 @@ class StemsApp(*_APP_BASES):
             variable=self.guitar_source_var,
         ).grid(row=0, column=1)
 
+        # Vocal-blend picker — only meaningful for presets that ensemble vocals
+        # (the "-max" presets); shown/hidden by _on_preset_change.
+        self.vocal_blend_row = ctk.CTkFrame(frame, fg_color="transparent")
+        self.vocal_blend_row.grid(
+            row=6, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="w"
+        )
+        ctk.CTkLabel(self.vocal_blend_row, text="Vocal blend").grid(
+            row=0, column=0, padx=(0, 6)
+        )
+        self.vocal_blend_var = ctk.StringVar(value=_DEFAULT_VOCAL_BLEND)
+        ctk.CTkSegmentedButton(
+            self.vocal_blend_row, values=list(_VOCAL_BLENDS),
+            variable=self.vocal_blend_var,
+        ).grid(row=0, column=1)
+
         self._on_preset_change(DEFAULT_PRESET)
 
     def _build_advanced(self) -> None:
@@ -422,6 +442,11 @@ class StemsApp(*_APP_BASES):
             self.guitar_row.grid()
         else:
             self.guitar_row.grid_remove()
+        # Vocal blend only applies when the preset merges several vocal models.
+        if getattr(preset, "vocal_models", []):
+            self.vocal_blend_row.grid()
+        else:
+            self.vocal_blend_row.grid_remove()
 
     def _initial_dir(self, key: str, fallback: str | None = None) -> str | None:
         """Remembered dir for a dialog if it still exists, else fallback/None."""
@@ -640,6 +665,10 @@ class StemsApp(*_APP_BASES):
         guitar_source = None
         if preset and getattr(PRESETS.get(preset), "guitar_model", ""):
             guitar_source = self.guitar_source_var.get()
+        # Only forward a vocal blend for presets that ensemble vocal models.
+        vocal_method = None
+        if preset and getattr(PRESETS.get(preset), "vocal_models", []):
+            vocal_method = _VOCAL_BLENDS.get(self.vocal_blend_var.get())
 
         segment_text = self.segment_var.get().strip()
         try:
@@ -664,6 +693,7 @@ class StemsApp(*_APP_BASES):
             recursive=self.recursive_var.get(),
             skip_existing=False,  # GUI always writes a fresh numbered folder
             guitar_source=guitar_source,
+            vocal_method=vocal_method,
         )
 
     # -------------------------------------------------------------- event pump

@@ -55,6 +55,9 @@ class JobParams:
     recursive: bool = False
     skip_existing: bool = False
     guitar_source: str | None = None
+    # Vocal-ensemble merge for the "-max" presets: "max_spec" (fuller, coherent)
+    # or "average" (smoother). None keeps the preset's default.
+    vocal_method: str | None = None
 
 
 @dataclass(slots=True)
@@ -176,6 +179,7 @@ def _process_one(
                     preset=params.preset, engine=params.engine,
                     model=params.model, stems=params.stems, fmt=params.fmt,
                     on_step=on_step, guitar_source=params.guitar_source,
+                    vocal_method=params.vocal_method,
                 )
                 summary["done"] += 1
                 events.put(Event("file_done", {

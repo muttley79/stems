@@ -101,6 +101,7 @@ def run_batch(
     recursive: bool = False,
     skip_existing: bool = False,
     guitar_source: str | None = None,
+    vocal_method: str | None = None,
 ) -> list[JobResult]:
     """Process all discovered inputs; returns one :class:`JobResult` per file."""
     input_path = Path(input_path)
@@ -170,7 +171,7 @@ def run_batch(
                     f, out_dir, config,
                     preset=preset, engine=engine, model=model,
                     stems=stems, fmt=fmt, on_step=on_step,
-                    guitar_source=guitar_source,
+                    guitar_source=guitar_source, vocal_method=vocal_method,
                 )
                 results.append(JobResult(f, out_dir, written=written))
                 progress.update(

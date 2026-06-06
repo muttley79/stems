@@ -104,12 +104,16 @@ def _ensemble_stem(
 
 def _run_twostem(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
-    on_step: StepCallback | None = None,
+    on_step: StepCallback | None = None, vocal_method: str | None = None,
 ) -> SeparationResult:
     """Clean 2-stem: ensemble vocal models for vocals, instrumental models for
     instrumental, each merged independently. Avoids dragging a strong model down
     with a weaker one and uses purpose-built instrumental models to kill bleed.
+
+    ``vocal_method`` overrides the preset's vocal merge (e.g. ``average`` instead
+    of the default ``max_spec``); ``None`` keeps the preset's choice.
     """
+    vocal_method = vocal_method or preset.vocal_method
     want_vocals = stems is None or "vocals" in stems
     want_instrumental = stems is None or "instrumental" in stems
 
@@ -123,7 +127,7 @@ def _run_twostem(
 
     if want_vocals:
         res = _ensemble_stem(
-            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method,
+            audio_path, preset.vocal_models, "vocals", config, vocal_method,
             tracker,
         )
         merged["vocals"] = res.stems["vocals"]
@@ -153,6 +157,7 @@ GUITAR_SOURCES = ("instrumental", "no-drums", "mix")
 def _run_cascade(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
     on_step: StepCallback | None = None, guitar_source: str | None = None,
+    vocal_method: str | None = None,
 ) -> SeparationResult:
     """Cascade: build the cleanest instrumental (ensemble of dedicated
     instrumental models), then run Demucs on it for the non-vocal stems. Vocals
@@ -162,7 +167,10 @@ def _run_cascade(
     For a guitar-bearing preset (``preset.guitar_model`` set, e.g. ``6stem-max``)
     the Demucs guitar head is replaced by a dedicated Roformer guitar model run
     on the audio chosen by ``guitar_source`` (see :data:`GUITAR_SOURCES`).
+
+    ``vocal_method`` overrides the preset's vocal merge; ``None`` keeps it.
     """
+    vocal_method = vocal_method or preset.vocal_method
     # Non-vocal stems this preset's demucs model yields (drums/bass/other, plus
     # guitar/piano for the 6-stem model). Backward compatible: for 4stem-max this
     # is exactly ("drums","bass","other").
@@ -204,7 +212,7 @@ def _run_cascade(
 
     if want_vocals:
         voc = _ensemble_stem(
-            audio_path, preset.vocal_models, "vocals", config, preset.vocal_method,
+            audio_path, preset.vocal_models, "vocals", config, vocal_method,
             tracker,
         )
         merged["vocals"] = voc.stems["vocals"]
@@ -277,6 +285,7 @@ def separate_to_result(
     stems: list[str] | None = None,
     on_step: StepCallback | None = None,
     guitar_source: str | None = None,
+    vocal_method: str | None = None,
 ) -> SeparationResult:
     """Resolve the plan and produce stems in memory.
 
@@ -284,6 +293,8 @@ def separate_to_result(
     preset. Otherwise the named ``preset`` plan runs. ``on_step`` is invoked
     before each model pass for progress reporting. ``guitar_source`` selects the
     audio fed to the dedicated guitar model in a guitar-bearing cascade.
+    ``vocal_method`` overrides how the vocal-model ensemble is merged
+    (``max_spec`` | ``average``); ``None`` uses the preset's default.
     """
     if model is not None:
         eng = engine or _infer_engine_for_model(model)
@@ -295,9 +306,11 @@ def separate_to_result(
     if p.kind == "ensemble":
         return _run_ensemble(audio_path, p, config, stems, on_step)
     if p.kind == "twostem":
-        return _run_twostem(audio_path, p, config, stems, on_step)
+        return _run_twostem(audio_path, p, config, stems, on_step, vocal_method)
     if p.kind == "cascade":
-        return _run_cascade(audio_path, p, config, stems, on_step, guitar_source)
+        return _run_cascade(
+            audio_path, p, config, stems, on_step, guitar_source, vocal_method
+        )
     raise ValueError(f"Unsupported preset kind: {p.kind}")
 
 
@@ -312,10 +325,12 @@ def separate_file(
     fmt: str = "both",
     on_step: StepCallback | None = None,
     guitar_source: str | None = None,
+    vocal_method: str | None = None,
 ) -> list[Path]:
     """Separate ``audio_path`` and write stems into ``out_dir``. Returns paths."""
     result = separate_to_result(
-        audio_path, config, preset, engine, model, stems, on_step, guitar_source
+        audio_path, config, preset, engine, model, stems, on_step, guitar_source,
+        vocal_method,
     )
     written: list[Path] = []
     for name, audio in result.stems.items():

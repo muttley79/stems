@@ -3,9 +3,14 @@
 Two strategies:
 - ``average``  — per-sample mean of aligned waveforms. Robust, reduces random
   artifacts, the safe default for the "-max" presets.
-- ``max_spec`` — keep, per time-frequency bin, the magnitude with the larger
-  value across models (phase taken from the contributor), which tends to retain
-  detail/transients. Falls back to ``average`` if torch is unavailable.
+- ``max_spec`` — keep, per time-frequency bin, the larger magnitude across
+  models, but reconstruct with a single *coherent* phase (the angle of the
+  summed spectra) rather than the per-bin winner's phase. Retains the fuller,
+  less-gated magnitude of a max combine while avoiding the artifact the naive
+  version caused: taking phase from whichever model won each bin makes the phase
+  of a held harmonic jump whenever the winner flips between frames, which
+  overlap-add turns into an audible amplitude flutter on sustained, multi-voice
+  content (e.g. a choir). Falls back to ``average`` if torch is unavailable.
 
 All inputs must share the same set of stem names; lengths are aligned by
 trimming to the shortest (models can differ by a few samples at the tail).
@@ -50,18 +55,19 @@ def _max_spec(arrays: list[np.ndarray]) -> np.ndarray:
     arrays = _match_channels(_align_length(arrays))
     n_fft, hop = 4096, 1024
     window = torch.hann_window(n_fft)
-    best_mag = None
-    best_spec = None
+    specs = []
     for a in arrays:
         t = torch.from_numpy(np.ascontiguousarray(a))
-        spec = torch.stft(t, n_fft=n_fft, hop_length=hop, window=window, return_complex=True)
-        mag = spec.abs()
-        if best_mag is None:
-            best_mag, best_spec = mag, spec
-        else:
-            take = mag > best_mag
-            best_spec = torch.where(take, spec, best_spec)
-            best_mag = torch.where(take, mag, best_mag)
+        specs.append(
+            torch.stft(t, n_fft=n_fft, hop_length=hop, window=window, return_complex=True)
+        )
+    stack = torch.stack(specs, dim=0)        # (models, channels, freq, frames)
+    max_mag = stack.abs().amax(dim=0)        # per-bin loudest magnitude
+    # One coherent phase for every bin (angle of the summed spectra) instead of
+    # the per-bin winner's phase: when the loudest model changes between frames
+    # the phase no longer jumps, so a sustained harmonic stays smooth.
+    phase = torch.angle(stack.sum(dim=0))
+    best_spec = torch.polar(max_mag, phase)
     out = torch.istft(
         best_spec, n_fft=n_fft, hop_length=hop, window=window, length=arrays[0].shape[-1]
     )

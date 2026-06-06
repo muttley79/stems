@@ -83,6 +83,13 @@ def separate(
     stems: Optional[str] = typer.Option(
         None, "--stems", help="Comma-separated stems to keep (e.g. vocals,drums)."
     ),
+    vocal_method: Optional[str] = typer.Option(
+        None, "--vocal-method",
+        help=(
+            "Vocal-ensemble merge for -max presets: max_spec (fuller, default) | "
+            "average (smoother). Ignored by single-model presets."
+        ),
+    ),
     guitar_source: Optional[str] = typer.Option(
         None, "--guitar-source",
         help=(
@@ -116,6 +123,8 @@ def separate(
     """Separate INPUT into stems written under OUTPUT_DIR."""
     if fmt not in ("wav", "mp3", "both"):
         raise typer.BadParameter("--format must be wav, mp3, or both")
+    if vocal_method is not None and vocal_method not in ("max_spec", "average"):
+        raise typer.BadParameter("--vocal-method must be max_spec or average")
     if model is None and preset is None:
         preset = DEFAULT_PRESET
 
@@ -160,6 +169,7 @@ def separate(
         recursive=recursive,
         skip_existing=skip_existing,
         guitar_source=guitar_source,
+        vocal_method=vocal_method,
     )
 
 
