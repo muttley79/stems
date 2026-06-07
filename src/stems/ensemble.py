@@ -1,9 +1,9 @@
 """Combine outputs of multiple models into a single, higher-quality result.
 
 Two strategies:
-- ``average``  — per-sample mean of aligned waveforms. Robust, reduces random
+- ``average``  - per-sample mean of aligned waveforms. Robust, reduces random
   artifacts, the safe default for the "-max" presets.
-- ``max_spec`` — keep, per time-frequency bin, the larger magnitude across
+- ``max_spec`` - keep, per time-frequency bin, the larger magnitude across
   models, but reconstruct with a single *coherent* phase (the angle of the
   summed spectra) rather than the per-bin winner's phase. Retains the fuller,
   less-gated magnitude of a max combine while avoiding the artifact the naive

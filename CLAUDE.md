@@ -8,8 +8,8 @@ Guidance for Claude Code (and humans) working in this repository.
 4-stem, or 6-stem) at studio quality. It is a thin CLI over a reusable core engine
 that fronts two separation backends:
 
-- **Demucs v4** (`demucs.api.Separator`) — 4/6-stem.
-- **`audio-separator`** (UVR/Roformer model zoo) — best vocals/instrumental.
+- **Demucs v4** (`demucs.api.Separator`) - 4/6-stem.
+- **`audio-separator`** (UVR/Roformer model zoo) - best vocals/instrumental.
 
 Output is lossless 24-bit WAV + 320 kbps MP3. Single files and recursive folder
 batches are supported.
@@ -17,10 +17,10 @@ batches are supported.
 ## Environment
 
 - Target **Python 3.10–3.12** (3.10 recommended). On this machine `py -3.10` /
-  `python3` is 3.10.11; the bare `python` is 3.13 — don't build the venv with it.
+  `python3` is 3.10.11; the bare `python` is 3.13 - don't build the venv with it.
 - **ffmpeg** must be on `PATH` (decoding + MP3 encoding).
 - GPU is auto-detected via `torch.cuda.is_available()`. Dev box: RTX 3060 Ti, 8 GB
-  — inference is chunked (`config.DEFAULT_SEGMENT`) to fit.
+  - inference is chunked (`config.DEFAULT_SEGMENT`) to fit.
 - Heavy deps (`torch`, `demucs`, `audio-separator`) are **imported lazily** inside
   engine `.separate()` methods so the CLI, presets/models listings, and unit tests
   import and run without them.
@@ -57,7 +57,7 @@ tests/                 # pytest; backends are stubbed, no models/GPU needed
 - **Audio arrays:** float32, shape `(channels, samples)` (channels-first), with the
   sample rate carried alongside. `audio_io` handles the `(samples, channels)` ↔
   channels-first conversion at the libsndfile boundary.
-- **No loudness normalization** anywhere — stems must remain summable back to the mix.
+- **No loudness normalization** anywhere - stems must remain summable back to the mix.
 - A separation returns a `SeparationResult` (`{stem_name: ndarray}` + `sample_rate`).
 - Stem names are canonical lowercase: `vocals, instrumental, drums, bass, other,
   guitar, piano`.
@@ -67,9 +67,9 @@ tests/                 # pytest; backends are stubbed, no models/GPU needed
 `presets.py` maps a friendly name to a `Preset` with one of three `kind`s, executed
 by `pipeline.py`:
 
-- **`single`** — one engine + one model.
-- **`ensemble`** — several models (same engine) merged by `ensemble.ensemble_results`.
-- **`cascade`** — isolate vocals with `vocal_engine`/`vocal_model` (UVR Roformer),
+- **`single`** - one engine + one model.
+- **`ensemble`** - several models (same engine) merged by `ensemble.ensemble_results`.
+- **`cascade`** - isolate vocals with `vocal_engine`/`vocal_model` (UVR Roformer),
   write the **instrumental residual** to a temp WAV, then run Demucs on that residual
   for drums/bass/other. Keeps vocals out of the instrumental stems. This is
   `DEFAULT_PRESET = "4stem-max"`.
@@ -86,7 +86,7 @@ by `pipeline.py`:
 - **New backend:** implement `BaseSeparator` in `engines/`, register it in
   `pipeline._ENGINES`, keep heavy imports inside `.separate()`.
 - **"Fine elements" (deferred):** lead/backing vocals, kick/snare split, de-reverb,
-  de-noise are intended to be added as new presets/cascade steps — no architectural
+  de-noise are intended to be added as new presets/cascade steps - no architectural
   change required.
 
 ## Testing & running
@@ -103,7 +103,7 @@ audio convention and avoid introducing normalization.
 
 ## Gotchas
 
-- Don't add MP3 support expectations to libsndfile — MP3 always goes through ffmpeg.
+- Don't add MP3 support expectations to libsndfile - MP3 always goes through ffmpeg.
 - `uvr_engine` classifies stems by **filename keywords** from audio-separator's
   output (`_classify_stem`); if a new model names files differently, extend
   `_STEM_KEYWORDS`.

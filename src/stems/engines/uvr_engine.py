@@ -80,7 +80,7 @@ def ensure_roformer_mlp_expansion_patch() -> None:
     ``mlp_expansion_factor: 1`` in its config) fails to load with
     ``unexpected keyword argument 'mlp_expansion_factor'``. We wrap the
     constructor to consume that kwarg and thread it into each ``MaskEstimator``
-    (whose own ``__init__`` already supports it) — matching newer
+    (whose own ``__init__`` already supports it) - matching newer
     audio-separator behavior without editing the installed package. Idempotent,
     lazy, and a no-op for configs that omit the key (default 4 = original
     behavior), so it never affects the other models.
@@ -121,7 +121,7 @@ def _quiet_separator():
 
     The library hard-codes its tqdm progress bars (no ``disable`` flag is
     threaded through), so they spew one line per update whenever stdout isn't a
-    TTY — e.g. when output is piped to a file. We force-disable tqdm by patching
+    TTY - e.g. when output is piped to a file. We force-disable tqdm by patching
     its ``__init__`` (every ``from tqdm import tqdm`` shares this one class), then
     restore it. INFO logging is quieted separately via the ``Separator``'s
     ``log_level``. Our own rich progress bar reports overall job progress.

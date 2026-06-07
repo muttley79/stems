@@ -3,9 +3,9 @@
 **Professional CLI audio stem separator.** Splits MP3/WAV (and most common audio
 formats) into stems at studio quality, using a multi-backend engine:
 
-- **Demucs v4** (Meta) — best all-round 4-stem and 6-stem separation.
-- **`audio-separator`** — the Ultimate Vocal Remover (UVR) model zoo: **BS-Roformer**,
-  **Mel-Band Roformer**, **MDX23C**, MDX-Net, VR-Arch — best-in-class
+- **Demucs v4** (Meta) - best all-round 4-stem and 6-stem separation.
+- **`audio-separator`** - the Ultimate Vocal Remover (UVR) model zoo: **BS-Roformer**,
+  **Mel-Band Roformer**, **MDX23C**, MDX-Net, VR-Arch - best-in-class
   vocals/instrumental isolation.
 
 Output is lossless **24-bit WAV** plus a **320 kbps MP3** copy of every stem.
@@ -13,7 +13,7 @@ Single files and whole folders (recursive) are supported, with skip-existing for
 resumable batches.
 
 **Input formats:** WAV, MP3, FLAC, OGG/Opus, M4A/AAC, WMA, AIFF, and WebM/MP4/MKV
-(audio track) — anything libsndfile or ffmpeg can decode. Output sample rate
+(audio track) - anything libsndfile or ffmpeg can decode. Output sample rate
 follows the source (e.g. a 48 kHz WebM yields 48 kHz stems).
 
 ![stems desktop GUI](docs/screenshot.png)
@@ -25,32 +25,32 @@ follows the source (e.g. a 48 kHz WebM yields 48 kHz stems).
 | Preset | Output stems | Strategy |
 |--------|--------------|----------|
 | `vocals` | vocals, instrumental | BS-Roformer ep368 (single fast pass) |
-| `vocals-max` *(default)* | vocals, instrumental | **Vocals:** max-spectrogram ensemble of Kim Jensen + Kim FT + Fullness (fuller, less "gated"). **Instrumental:** averaged ensemble of BS-Roformer + Inst-V2 + Bleedless (low vocal residue). 6 passes — the cleanest, most natural 2-stem. |
+| `vocals-max` *(default)* | vocals, instrumental | **Vocals:** max-spectrogram ensemble of Kim Jensen + Kim FT + Fullness (fuller, less "gated"). **Instrumental:** averaged ensemble of BS-Roformer + Inst-V2 + Bleedless (low vocal residue). 6 passes - the cleanest, most natural 2-stem. |
 | `4stem` | vocals, drums, bass, other | Demucs `htdemucs_ft` (single pass) |
 | `4stem-max` | vocals, drums, bass, other | Cascade: ensemble instrumental → Demucs `htdemucs_ft` on the clean instrumental (+ ensemble vocals) |
 | `6stem` | vocals, drums, bass, guitar, piano, other | Demucs `htdemucs_6s` |
 | `6stem-max` | vocals, drums, bass, other, guitar, piano | Cascade: ensemble instrumental → Demucs `htdemucs_6s` for drums/bass/other/piano, with **guitar from a dedicated Roformer guitar model** (+ ensemble vocals). Requires `--guitar-source`. |
 
-- **Ensemble** — runs several models and merges per-stem (waveform average or
+- **Ensemble** - runs several models and merges per-stem (waveform average or
   max-spectrogram) for the cleanest possible result.
-- **Cascade** (`4stem-max`, `6stem-max`) — builds the cleanest instrumental via the
+- **Cascade** (`4stem-max`, `6stem-max`) - builds the cleanest instrumental via the
   dedicated instrumental ensemble, then runs Demucs on *that* (not the raw mix) so
   vocals never bleed into drums/bass/other. Vocals come from the vocal ensemble and
-  are only computed when requested — `--stems drums,bass,other` skips the vocal
+  are only computed when requested - `--stems drums,bass,other` skips the vocal
   passes for speed.
-- **Raw model override** — `--model htdemucs_6s` or `--model bs_roformer` bypasses
+- **Raw model override** - `--model htdemucs_6s` or `--model bs_roformer` bypasses
   presets for full control.
 
 > **On guitar:** `6stem-max` replaces Demucs's weak guitar head with a dedicated
 > Mel-Band Roformer guitar model. No single input is best for every song, so you
 > must pick one with `--guitar-source`:
-> - `instrumental` — vocals removed only (drums/bass kept). Best for **faint /
+> - `instrumental` - vocals removed only (drums/bass kept). Best for **faint /
 >   buried / acoustic** guitar; the Demucs pass never gets to mangle it.
-> - `no-drums` — vocals + drums + bass removed. Best for **prominent / electric**
+> - `no-drums` - vocals + drums + bass removed. Best for **prominent / electric**
 >   guitar; kills drum-section bleed (but can drop pure-noise effects like feedback).
-> - `mix` — the original mix untouched (leaves some vocal bleed in the guitar).
+> - `mix` - the original mix untouched (leaves some vocal bleed in the guitar).
 >
-> It's good, not perfect — sparse/percussive passages and pure feedback remain hard.
+> It's good, not perfect - sparse/percussive passages and pure feedback remain hard.
 > `piano` still comes from `htdemucs_6s` and stays weak.
 
 > **Guitar model setup:** the guitar weights aren't in the `audio-separator`
@@ -113,7 +113,7 @@ stems separate song.mp3 -p 4stem-max
 # 6 stems (vocals, drums, bass, guitar, piano, other)
 stems separate song.wav out\ --preset 6stem
 
-# Best 6-stem with a dedicated guitar model — pick the guitar input:
+# Best 6-stem with a dedicated guitar model - pick the guitar input:
 stems separate song.mp3 -p 6stem-max --guitar-source no-drums      # prominent/electric
 stems separate song.mp3 -p 6stem-max --guitar-source instrumental  # faint/acoustic
 
@@ -148,8 +148,8 @@ stems separate --help
 
 ### Desktop GUI
 
-A desktop GUI (CustomTkinter) is available alongside the CLI — same engine, same
-presets, with live progress and a download indicator. Just run the launcher — on
+A desktop GUI (CustomTkinter) is available alongside the CLI - same engine, same
+presets, with live progress and a download indicator. Just run the launcher - on
 its first run it installs the GUI dependencies itself, so there's nothing to
 `pip install` by hand:
 
@@ -169,22 +169,22 @@ results.
 
 Extras:
 
-- **Job queue** — **Add to queue** snapshots the current form as a job (each with
+- **Job queue** - **Add to queue** snapshots the current form as a job (each with
   its own settings). **Run** processes the queue top-to-bottom; you can keep
   adding jobs *while it runs* and they're picked up automatically. Each job shows a
   live elapsed timer and status, with **Cancel task** to drop just the running job
   (the queue moves on) or **Cancel all** to stop everything after the current file.
-- **Numbered output folders** — every GUI run writes to its own `NN_<track>/`
+- **Numbered output folders** - every GUI run writes to its own `NN_<track>/`
   folder (`01_song/`, `02_song/`, …), so running the same file again (e.g. with a
   different preset) never overwrites or mixes into a previous result. Numbering
   continues from whatever `NN_<track>` folders already exist, even across sessions.
-- **Combine into one file** — tick any of a preset's stems (e.g. *vocals* +
+- **Combine into one file** - tick any of a preset's stems (e.g. *vocals* +
   *drums*) and the run writes a single summed file (`vocals+drums.wav`/`.mp3`)
   instead of separate stems. Shown for the multi-stem presets; the CLI equivalent
   is `--mix`.
 - **Drag-and-drop** a file or folder onto the input box; the **Browse** dialogs
   remember the last folder you used (persisted across restarts).
-- **Single instance** — launching again brings the existing window to the front.
+- **Single instance** - launching again brings the existing window to the front.
 - No stray console windows: ffmpeg and the backends run windowless inside the GUI.
 - Self-installing: `stems-gui.bat` adds the GUI deps on first run; launches are
   windowless thereafter (it runs `pythonw -m stems.gui`).
@@ -193,14 +193,14 @@ Extras:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `INPUT` | — | File or folder to process. |
+| `INPUT` | - | File or folder to process. |
 | `OUTPUT_DIR` | `output` | Where stems are written. |
 | `-p, --preset` | `vocals-max` | Named plan (`vocals`, `vocals-max`, `4stem`, `4stem-max`, `6stem`, `6stem-max`). |
-| `-m, --model` | — | Raw model override; bypasses preset. |
+| `-m, --model` | - | Raw model override; bypasses preset. |
 | `-e, --engine` | auto | Engine for `--model`: `demucs` or `uvr`. |
 | `--stems` | all | Comma list of stems to keep, each as its own file (e.g. `vocals,drums`). |
-| `--mix` | — | Combine the listed stems into **one** summed file (e.g. `vocals,drums` → `vocals+drums.wav`); only the mix is written. Mutually exclusive with `--stems`. |
-| `--guitar-source` | — | `6stem-max` only (**required**): guitar-model input — `instrumental`, `no-drums`, or `mix`. |
+| `--mix` | - | Combine the listed stems into **one** summed file (e.g. `vocals,drums` → `vocals+drums.wav`); only the mix is written. Mutually exclusive with `--stems`. |
+| `--guitar-source` | - | `6stem-max` only (**required**): guitar-model input - `instrumental`, `no-drums`, or `mix`. |
 | `-f, --format` | `both` | `wav`, `mp3`, or `both`. |
 | `--bitdepth` | `24` | WAV bit depth: `16`, `24`, or `32`. |
 | `--device` | `auto` | `auto`, `cuda`, or `cpu`. |
@@ -227,7 +227,7 @@ output/                       # default OUTPUT_DIR (override by passing one)
 
 With `--mix` (or the GUI's **Combine into one file**), the chosen stems are
 summed into a single `<a>+<b>.wav`/`.mp3` (e.g. `vocals+drums.wav`) and **only**
-that combined file is written — handy for a quick custom submix.
+that combined file is written - handy for a quick custom submix.
 
 So `stems separate song.mp3 -p vocals-max` writes to `./output/song/vocals.wav`
 (+ `.mp3`) and `./output/song/instrumental.wav` (+ `.mp3`).
@@ -274,12 +274,12 @@ downloading any model weights.
 
 ## Troubleshooting
 
-- **`ffmpeg not found`** — install ffmpeg and ensure it's on `PATH`
+- **`ffmpeg not found`** - install ffmpeg and ensure it's on `PATH`
   (`ffmpeg -version`). Required for non-WAV input and MP3 output.
-- **CUDA out of memory** — lower `--segment` (e.g. `5`) and/or `--overlap`, or
+- **CUDA out of memory** - lower `--segment` (e.g. `5`) and/or `--overlap`, or
   run `--device cpu`.
-- **First run is slow** — model weights download once into `./models/`.
-- **Wrong stems from `--model`** — pass `--engine demucs|uvr` to disambiguate.
+- **First run is slow** - model weights download once into `./models/`.
+- **Wrong stems from `--model`** - pass `--engine demucs|uvr` to disambiguate.
 
 ## License
 

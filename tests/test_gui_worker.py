@@ -1,4 +1,4 @@
-"""GUI worker tests — exercise the background runner without torch or a window.
+"""GUI worker tests - exercise the background runner without torch or a window.
 
 The worker reuses the same pipeline as the CLI, so we stub the engine registry
 exactly like ``test_pipeline`` does and assert that ``run_job`` turns a real

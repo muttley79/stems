@@ -164,7 +164,7 @@ def test_separate_file_combine_writes_single_mix(stub_engines, tmp_path):
     )
     assert len(written) == 1
     assert written[0].name == "drums+bass.wav"
-    # Only the combined mix is written — no per-stem files.
+    # Only the combined mix is written - no per-stem files.
     assert {f.name for f in out.iterdir()} == {"drums+bass.wav"}
     audio, sr = sf.read(str(written[0]))
     assert sr == SR

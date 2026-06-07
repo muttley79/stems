@@ -1,11 +1,11 @@
-"""Desktop GUI for stems — a second thin front-end over the same pipeline.
+"""Desktop GUI for stems - a second thin front-end over the same pipeline.
 
 The GUI mirrors the CLI: it collects a plan (preset or raw model) plus output
 settings and runs the exact same core (:mod:`stems.pipeline`) on a background
 thread, streaming progress back to the window. The CLI is unaffected.
 
 ``customtkinter`` is an optional dependency (the ``gui`` extra); it is imported
-lazily inside :func:`main` so the rest of the package — and the unit tests —
+lazily inside :func:`main` so the rest of the package - and the unit tests -
 import without it.
 """
 

@@ -112,7 +112,7 @@ def _process_one(
     terminal event so it can be reused for both a lone job and a queue. Two
     cooperative flags are checked between files: ``cancel`` (abandon the whole
     run) and ``skip_current`` (stop just this job). A single in-flight file pass
-    always finishes first — it cannot be interrupted mid-pass safely.
+    always finishes first - it cannot be interrupted mid-pass safely.
 
     When ``number_outputs`` is set, each file gets its own always-numbered folder
     (``01_<track>``, ``02_<track>``, … continuing from what's already on disk) so

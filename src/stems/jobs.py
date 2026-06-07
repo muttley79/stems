@@ -72,8 +72,8 @@ def unique_output_dir(out_dir: Path) -> Path:
     """Return a fresh, always-prefixed per-track output dir (``NN_<name>``).
 
     Scan the target parent for existing ``NN_<name>`` folders and use the next
-    number (``01_`` if there are none). So the same input run again — now or any
-    time later — gets a new folder instead of overwriting the previous result; it
+    number (``01_`` if there are none). So the same input run again - now or any
+    time later - gets a new folder instead of overwriting the previous result; it
     just continues the sequence already on disk.
     """
     parent = out_dir.parent
@@ -186,7 +186,7 @@ def run_batch(
                     step_task,
                     description=f"[cyan]{f.name}[/cyan] · [red]failed[/red]",
                 )
-                console.print(f"[red]Failed:[/red] {f.name} — {exc}")
+                console.print(f"[red]Failed:[/red] {f.name} - {exc}")
             progress.advance(file_task)
 
     _print_summary(results)

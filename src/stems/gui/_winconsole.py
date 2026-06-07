@@ -1,7 +1,7 @@
 """Hide child-process console windows when the GUI runs windowless.
 
-A ``pythonw`` (no-console) GUI process spawns every console child — ffmpeg for
-decode/MP3 export, plus anything demucs / audio-separator shell out to — in its
+A ``pythonw`` (no-console) GUI process spawns every console child - ffmpeg for
+decode/MP3 export, plus anything demucs / audio-separator shell out to - in its
 *own* console window unless told otherwise, which looks like stray black boxes
 flashing during a run. We install a process-wide default so every
 ``subprocess.Popen`` created in this process gets ``CREATE_NO_WINDOW`` and a

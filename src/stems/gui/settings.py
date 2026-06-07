@@ -2,7 +2,7 @@
 
 A single JSON object is read/written at a per-user path:
 
-- ``STEMS_GUI_CONFIG`` (env) if set — points directly at the file (used by tests);
+- ``STEMS_GUI_CONFIG`` (env) if set - points directly at the file (used by tests);
 - else ``%APPDATA%/stems/gui.json`` on Windows;
 - else ``$XDG_CONFIG_HOME/stems/gui.json`` or ``~/.config/stems/gui.json``.
 

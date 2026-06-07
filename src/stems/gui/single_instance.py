@@ -108,7 +108,7 @@ def acquire_or_signal() -> SingleInstanceServer | None:
     Returns a :class:`SingleInstanceServer` to keep for the app's lifetime when
     this process should run (it is primary, or a foreign service holds the port).
     Returns ``None`` when an already-running stems GUI was asked to come to the
-    front — the caller should simply exit.
+    front - the caller should simply exit.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -121,7 +121,7 @@ def acquire_or_signal() -> SingleInstanceServer | None:
     # Port busy: try to wake the running stems instance.
     if _signal_existing():
         return None
-    # Held by something that isn't us — run anyway (fail open), no relaying.
+    # Held by something that isn't us - run anyway (fail open), no relaying.
     return SingleInstanceServer(None)
 
 

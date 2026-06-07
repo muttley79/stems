@@ -60,7 +60,7 @@ def _main(
         help="Show version and exit.",
     ),
 ) -> None:
-    """stems — split audio into vocals/instrumental, 4-stem, or 6-stem."""
+    """stems - split audio into vocals/instrumental, 4-stem, or 6-stem."""
 
 
 @app.command()
@@ -100,7 +100,7 @@ def separate(
     guitar_source: Optional[str] = typer.Option(
         None, "--guitar-source",
         help=(
-            "For 6stem-max: audio fed to the guitar model — instrumental "
+            "For 6stem-max: audio fed to the guitar model - instrumental "
             "(faint/acoustic) | no-drums (prominent/electric) | mix. Required for "
             "that preset."
         ),

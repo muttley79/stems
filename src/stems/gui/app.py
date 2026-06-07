@@ -77,6 +77,7 @@ class QueuedJob:
     status: str = "queued"
     started: float | None = None      # monotonic time the job began
     elapsed: float | None = None      # final duration once finished
+    out_dir: Path | None = None       # last written output folder (for reveal)
     widgets: dict[str, Any] = field(default_factory=dict)
 
 # Mix the tkinterdnd2 wrapper into the window only when available, so drop-target
@@ -91,11 +92,11 @@ class StemsApp(*_APP_BASES):
         super().__init__()
         self._dnd_ready = self._enable_dnd()
         self.title(f"stems · audio separator  (v{__version__})")
-        self.geometry("1300x700")
-        self.minsize(1300, 640)
+        self.geometry("1300x788")
+        self.minsize(1300, 712)
         # Two columns. The left (options) absorbs any extra width; the right
-        # column has no weight, so it shrinks to its natural content width —
-        # the action-button row — and the window's right edge hugs the buttons.
+        # column has no weight, so it shrinks to its natural content width -
+        # the action-button row - and the window's right edge hugs the buttons.
         self.grid_columnconfigure(0, weight=1, minsize=760)
         self.grid_columnconfigure(1, weight=0)
 
@@ -234,7 +235,7 @@ class StemsApp(*_APP_BASES):
         # No "skip existing" control: every run writes a fresh numbered folder
         # (NN_<track>/), so there is never a pre-existing output to skip.
 
-        # Guitar-source picker — only meaningful for guitar-bearing presets
+        # Guitar-source picker - only meaningful for guitar-bearing presets
         # (6stem-max); shown/hidden by _on_preset_change.
         self.guitar_row = ctk.CTkFrame(frame, fg_color="transparent")
         self.guitar_row.grid(
@@ -249,7 +250,7 @@ class StemsApp(*_APP_BASES):
             variable=self.guitar_source_var,
         ).grid(row=0, column=1)
 
-        # Vocal-blend picker — only meaningful for presets that ensemble vocals
+        # Vocal-blend picker - only meaningful for presets that ensemble vocals
         # (the "-max" presets); shown/hidden by _on_preset_change.
         self.vocal_blend_row = ctk.CTkFrame(frame, fg_color="transparent")
         self.vocal_blend_row.grid(
@@ -264,7 +265,7 @@ class StemsApp(*_APP_BASES):
             variable=self.vocal_blend_var,
         ).grid(row=0, column=1)
 
-        # Selective output — sum the checked stems into one combined file.
+        # Selective output - sum the checked stems into one combined file.
         # Checkboxes are rebuilt per preset (its output_stems) and the row is
         # shown only for multi-stem presets; both handled by _on_preset_change.
         self.mix_row = ctk.CTkFrame(frame, fg_color="transparent")
@@ -309,7 +310,8 @@ class StemsApp(*_APP_BASES):
         frame.grid_rowconfigure(5, weight=1)  # queue panel grows
         # Root row 3 holds the full-width Log; give it the spare vertical space
         # so the option sections (rows 0-2) stay packed at their natural height.
-        self.grid_rowconfigure(3, weight=1)
+        # minsize keeps a usable log even with the tallest preset (6stem-max).
+        self.grid_rowconfigure(3, weight=1, minsize=120)
 
         buttons = ctk.CTkFrame(frame, fg_color="transparent")
         buttons.grid(row=0, column=0, padx=12, pady=8, sticky="ew")
@@ -371,7 +373,7 @@ class StemsApp(*_APP_BASES):
         self.queue_frame.grid_columnconfigure(0, weight=1)
         self.queue_empty = ctk.CTkLabel(
             self.queue_frame,
-            text="No jobs queued. Add to queue, or press Run for the form above.",
+            text="No jobs queued. Add to queue to enable Run.",
             text_color="gray50",
         )
         self.queue_empty.grid(row=0, column=0, padx=8, pady=8, sticky="w")
@@ -391,6 +393,8 @@ class StemsApp(*_APP_BASES):
         self.log.grid(row=1, column=0, padx=12, pady=(4, 12), sticky="nsew")
         self.log.configure(state="disabled")
 
+        self._update_run_button()  # start disabled until a job is queued
+
     # ----------------------------------------------------------- drag-and-drop
 
     def _enable_dnd(self) -> bool:
@@ -400,7 +404,7 @@ class StemsApp(*_APP_BASES):
         try:
             self.TkdndVersion = TkinterDnD._require(self)
             return True
-        except Exception:  # tkdnd Tcl package missing/unloadable — skip silently
+        except Exception:  # tkdnd Tcl package missing/unloadable - skip silently
             return False
 
     def _register_drop(self, widget, var, dirs_only: bool = False) -> None:
@@ -413,7 +417,7 @@ class StemsApp(*_APP_BASES):
                 "<<Drop>>",
                 lambda e, v=var, d=dirs_only: self._on_drop(e, v, d),
             )
-        except Exception:  # registration unsupported for this widget — ignore
+        except Exception:  # registration unsupported for this widget - ignore
             pass
 
     def _on_drop(self, event, var, dirs_only: bool) -> None:
@@ -539,8 +543,12 @@ class StemsApp(*_APP_BASES):
             self.output_var.set(path)
             self._remember("output_dir", path)
 
-    def _open_output(self) -> None:
-        target = self._last_out_dir or Path(self.output_var.get())
+    def _reveal_folder(self, target: Path | None) -> None:
+        """Open ``target`` in the OS file manager (used by the Open button and the
+        clickable "done" badge)."""
+        if target is None:
+            return
+        target = Path(target)
         if not target.exists():
             self._append_log(f"Output folder does not exist yet: {target}")
             return
@@ -555,6 +563,9 @@ class StemsApp(*_APP_BASES):
                 subprocess.Popen(["xdg-open", str(target)])
         except Exception as exc:
             self._append_log(f"Could not open folder: {exc}")
+
+    def _open_output(self) -> None:
+        self._reveal_folder(self._last_out_dir or Path(self.output_var.get()))
 
     # ------------------------------------------------------------------- queue
 
@@ -580,6 +591,7 @@ class StemsApp(*_APP_BASES):
         # If a run is already in flight, hand the new job to the live worker queue.
         if self._running and self._job_q is not None:
             self._job_q.put((job.id, job.params))
+        self._update_run_button()
         return True
 
     def _render_job_row(self, job: QueuedJob) -> None:
@@ -595,6 +607,9 @@ class StemsApp(*_APP_BASES):
         time_lbl.grid(row=0, column=1, padx=4)
         badge = ctk.CTkLabel(row, text="", width=72)
         badge.grid(row=0, column=2, padx=4)
+        # Clicking a finished job's "done" badge opens its output folder. Bound
+        # once here; the handler is a no-op unless the job is done.
+        badge.bind("<Button-1>", lambda _e, j=job: self._on_badge_click(j))
         action = ctk.CTkButton(row, text="✕", width=30, fg_color="gray40")
         action.grid(row=0, column=3, padx=(4, 8))
         job.widgets = {
@@ -605,7 +620,18 @@ class StemsApp(*_APP_BASES):
 
     def _set_row_state(self, job: QueuedJob) -> None:
         text, colour = _STATUS_STYLE.get(job.status, ("queued", "gray60"))
-        job.widgets["badge"].configure(text=text, text_color=colour)
+        badge = job.widgets["badge"]
+        badge.configure(text=text, text_color=colour)
+        # A finished job's green "done" badge is clickable (bound once in
+        # _render_job_row); show a hand cursor to advertise it. CTkLabel.configure
+        # doesn't take `cursor`, so set it on the inner tk widgets directly.
+        clickable = job.status == "done" and job.out_dir is not None
+        cursor = "hand2" if clickable else ""
+        try:
+            badge._label.configure(cursor=cursor)
+            badge._canvas.configure(cursor=cursor)
+        except Exception:  # internal attrs are best-effort cosmetics only
+            pass
         action = job.widgets["action"]
         if job.status == "running":
             action.configure(
@@ -619,8 +645,14 @@ class StemsApp(*_APP_BASES):
                 state="disabled" if self._running else "normal",
             )
         else:  # done / failed / skipped / cancelled
-            action.configure(text="✓" if job.status == "done" else "—",
+            action.configure(text="✓" if job.status == "done" else "-",
                              width=30, fg_color="gray30", state="disabled")
+        self._update_run_button()
+
+    def _on_badge_click(self, job: QueuedJob) -> None:
+        """Open the job's output folder when its "done" badge is clicked."""
+        if job.status == "done" and job.out_dir is not None:
+            self._reveal_folder(job.out_dir)
 
     def _on_remove_job(self, job: QueuedJob) -> None:
         if self._running or job.status != "queued":
@@ -630,6 +662,7 @@ class StemsApp(*_APP_BASES):
         self._jobs_by_id.pop(job.id, None)
         if not self._queue:
             self.queue_empty.grid()
+        self._update_run_button()
 
     def _on_clear_queue(self) -> None:
         if self._running:
@@ -639,6 +672,7 @@ class StemsApp(*_APP_BASES):
         self._queue.clear()
         self._jobs_by_id.clear()
         self.queue_empty.grid()
+        self._update_run_button()
 
     def _on_cancel_task(self, job: QueuedJob) -> None:
         """Cancel just the running job; the queue advances to the next one."""
@@ -651,13 +685,11 @@ class StemsApp(*_APP_BASES):
     # --------------------------------------------------------------------- run
 
     def _on_run(self) -> None:
+        # Run is disabled unless the queue has pending jobs (see
+        # _update_run_button), so there is always something to start here.
         pending = [j for j in self._queue if j.status == "queued"]
         if not pending:
-            # Nothing queued: snapshot the current form as a one-off job so Run
-            # always produces a job row (with its own status + timer).
-            if not self._enqueue_current():
-                return
-            pending = [j for j in self._queue if j.status == "queued"]
+            return
         self._start_queue_run(pending)
 
     def _prepare_run(self) -> None:
@@ -801,7 +833,11 @@ class StemsApp(*_APP_BASES):
             self._append_log(f"  skipped (output exists): {data['name']}")
         elif kind == "file_done":
             self.step_bar.set(1)
-            self._last_out_dir = Path(data["out_dir"])
+            out_dir = Path(data["out_dir"])
+            self._last_out_dir = out_dir
+            job = self._jobs_by_id.get(self._current_job_id)
+            if job is not None:
+                job.out_dir = out_dir  # remember it for the clickable "done" badge
             self.open_btn.configure(state="normal")
             self._append_log(
                 f"  ✓ {data['name']} → {len(data['written'])} files"
@@ -846,7 +882,7 @@ class StemsApp(*_APP_BASES):
         self.step_bar.set(1 if summary.get("done") else 0)
         if "jobs" in summary:
             msg = (
-                f"Queue done: {summary.get('jobs', 0)} job(s) — "
+                f"Queue done: {summary.get('jobs', 0)} job(s) - "
                 f"{summary.get('done', 0)} files separated, "
                 f"{summary.get('skipped', 0)} skipped, "
                 f"{summary.get('failed', 0)} failed."
@@ -905,9 +941,16 @@ class StemsApp(*_APP_BASES):
 
     # --------------------------------------------------------------- ui state
 
+    def _update_run_button(self) -> None:
+        """Run is enabled only when at least one pending (queued) job exists and
+        no run is already in flight."""
+        has_pending = any(j.status == "queued" for j in self._queue)
+        self.run_btn.configure(
+            state="normal" if (has_pending and not self._running) else "disabled"
+        )
+
     def _set_running(self, running: bool) -> None:
         self._running = running
-        self.run_btn.configure(state="disabled" if running else "normal")
         self.cancel_btn.configure(state="normal" if running else "disabled")
         # Add stays enabled while running (live append); Clear is idle-only.
         self.clear_btn.configure(state="disabled" if running else "normal")
@@ -917,6 +960,7 @@ class StemsApp(*_APP_BASES):
             self._current_job_id = None
             self._stop_ticker()
             self._end_download()
+        self._update_run_button()
 
     def _clear_log(self) -> None:
         self.log.configure(state="normal")

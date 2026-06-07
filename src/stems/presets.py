@@ -2,10 +2,10 @@
 
 A :class:`Preset` describes *how* to produce a stem set:
 
-- ``single``   — one engine + one model.
-- ``ensemble`` — run several models (same engine), merge per-stem (see
+- ``single``   - one engine + one model.
+- ``ensemble`` - run several models (same engine), merge per-stem (see
   :mod:`stems.ensemble`). Used for the highest-fidelity 2-stem result.
-- ``cascade``  — extract vocals with the best vocal model, subtract to get the
+- ``cascade``  - extract vocals with the best vocal model, subtract to get the
   backing track, then run Demucs on the residual for drums/bass/other. Yields
   the best practical 4-stem split.
 
@@ -40,7 +40,7 @@ class Preset:
     guitar_model: str = ""
     # twostem-only: separate ensembles for each stem. Vocals are taken from the
     # vocal models, instrumental from the instrumental models, then each is
-    # merged independently — the pro approach to a clean 2-stem split.
+    # merged independently - the pro approach to a clean 2-stem split.
     vocal_models: list[str] = field(default_factory=list)
     instrumental_models: list[str] = field(default_factory=list)
 

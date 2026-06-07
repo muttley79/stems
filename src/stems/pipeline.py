@@ -146,11 +146,11 @@ def _run_twostem(
 
 #: Valid inputs for the dedicated guitar model in a guitar-bearing cascade
 #: (``6stem-max``). No single source wins every song, so the user must pick:
-#:   - ``instrumental`` — vocals removed only (drums/bass kept): best for faint /
+#:   - ``instrumental`` - vocals removed only (drums/bass kept): best for faint /
 #:     buried / acoustic guitars; the Demucs pass never touches the guitar.
-#:   - ``no-drums``     — vocals + drums + bass removed: best for prominent /
+#:   - ``no-drums``     - vocals + drums + bass removed: best for prominent /
 #:     electric guitars; kills drum-section bleed.
-#:   - ``mix``          — the original mix untouched (leaves vocal bleed in).
+#:   - ``mix``          - the original mix untouched (leaves vocal bleed in).
 GUITAR_SOURCES = ("instrumental", "no-drums", "mix")
 
 
@@ -467,7 +467,7 @@ def _demucs_cached(model: str) -> bool:
     empty/absent, so the slow download is prefetched with a visible bar; later
     runs skip the prefetch and load normally. (Switching to a not-yet-downloaded
     Demucs model when the cache is already populated falls back to the old
-    in-pipeline download — acceptable for this rare case.)
+    in-pipeline download - acceptable for this rare case.)
     """
     try:
         import torch
