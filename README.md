@@ -120,8 +120,11 @@ stems separate song.mp3 -p 6stem-max --guitar-source instrumental  # faint/acous
 # Cleanest vocals/instrumental via model ensemble (explicit output dir)
 stems separate song.mp3 out\ -p vocals-max
 
-# Only keep certain stems, WAV only
+# Only keep certain stems (each its own file), WAV only
 stems separate song.wav out\ -p 6stem --stems vocals,drums --format wav
+
+# Combine selected stems into ONE summed file → vocals+drums.wav (+ .mp3)
+stems separate song.wav out\ -p 6stem --mix vocals,drums
 
 # Batch an entire library recursively, resume-friendly
 stems separate .\album\ out\ -r --skip-existing -p 4stem-max
@@ -175,6 +178,10 @@ Extras:
   folder (`01_song/`, `02_song/`, …), so running the same file again (e.g. with a
   different preset) never overwrites or mixes into a previous result. Numbering
   continues from whatever `NN_<track>` folders already exist, even across sessions.
+- **Combine into one file** — tick any of a preset's stems (e.g. *vocals* +
+  *drums*) and the run writes a single summed file (`vocals+drums.wav`/`.mp3`)
+  instead of separate stems. Shown for the multi-stem presets; the CLI equivalent
+  is `--mix`.
 - **Drag-and-drop** a file or folder onto the input box; the **Browse** dialogs
   remember the last folder you used (persisted across restarts).
 - **Single instance** — launching again brings the existing window to the front.
@@ -191,7 +198,8 @@ Extras:
 | `-p, --preset` | `vocals-max` | Named plan (`vocals`, `vocals-max`, `4stem`, `4stem-max`, `6stem`, `6stem-max`). |
 | `-m, --model` | — | Raw model override; bypasses preset. |
 | `-e, --engine` | auto | Engine for `--model`: `demucs` or `uvr`. |
-| `--stems` | all | Comma list of stems to keep (e.g. `vocals,drums`). |
+| `--stems` | all | Comma list of stems to keep, each as its own file (e.g. `vocals,drums`). |
+| `--mix` | — | Combine the listed stems into **one** summed file (e.g. `vocals,drums` → `vocals+drums.wav`); only the mix is written. Mutually exclusive with `--stems`. |
 | `--guitar-source` | — | `6stem-max` only (**required**): guitar-model input — `instrumental`, `no-drums`, or `mix`. |
 | `-f, --format` | `both` | `wav`, `mp3`, or `both`. |
 | `--bitdepth` | `24` | WAV bit depth: `16`, `24`, or `32`. |
@@ -216,6 +224,10 @@ output/                       # default OUTPUT_DIR (override by passing one)
 ```
 
 (A 4-/6-stem preset writes `drums`, `bass`, `other`, etc. into the same layout.)
+
+With `--mix` (or the GUI's **Combine into one file**), the chosen stems are
+summed into a single `<a>+<b>.wav`/`.mp3` (e.g. `vocals+drums.wav`) and **only**
+that combined file is written — handy for a quick custom submix.
 
 So `stems separate song.mp3 -p vocals-max` writes to `./output/song/vocals.wav`
 (+ `.mp3`) and `./output/song/instrumental.wav` (+ `.mp3`).
