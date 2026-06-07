@@ -141,3 +141,56 @@ def test_separate_file_writes_outputs(stub_engines, tmp_path):
     )
     assert len(written) == 4
     assert all(p.suffix == ".wav" and p.is_file() for p in written)
+
+
+def test_sum_stems_aligns_and_adds():
+    from stems.ensemble import sum_stems
+
+    a = _const(0.3, n=SR)
+    b = _const(0.4, n=SR - 5)  # a few samples shorter at the tail
+    out = sum_stems([a, b])
+    assert out.shape == (2, SR - 5)  # aligned to the shorter length
+    assert np.allclose(out, 0.7)
+
+
+def test_separate_file_combine_writes_single_mix(stub_engines, tmp_path):
+    import soundfile as sf
+
+    cfg = RunConfig(device="cpu", bitdepth=32)  # FLOAT WAV → exact readback
+    out = tmp_path / "out"
+    written = pipeline.separate_file(
+        tmp_path / "x.wav", out, cfg, preset="6stem", fmt="wav",
+        combine=["drums", "bass"],
+    )
+    assert len(written) == 1
+    assert written[0].name == "drums+bass.wav"
+    # Only the combined mix is written — no per-stem files.
+    assert {f.name for f in out.iterdir()} == {"drums+bass.wav"}
+    audio, sr = sf.read(str(written[0]))
+    assert sr == SR
+    assert np.allclose(audio, 0.6, atol=1e-6)  # drums(0.2) + bass(0.4)
+
+
+def test_cli_mix_and_stems_conflict():
+    from typer.testing import CliRunner
+
+    from stems.cli import app
+
+    result = CliRunner().invoke(app, [
+        "separate", "x.wav", "out", "-p", "6stem",
+        "--mix", "vocals,drums", "--stems", "vocals",
+    ])
+    assert result.exit_code != 0
+    assert "cannot be used together" in result.output
+
+
+def test_cli_mix_rejects_unknown_stem():
+    from typer.testing import CliRunner
+
+    from stems.cli import app
+
+    result = CliRunner().invoke(app, [
+        "separate", "x.wav", "out", "-p", "6stem", "--mix", "vocals,bogus",
+    ])
+    assert result.exit_code != 0
+    assert "bogus" in result.output

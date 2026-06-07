@@ -91,9 +91,13 @@ class StemsApp(*_APP_BASES):
         super().__init__()
         self._dnd_ready = self._enable_dnd()
         self.title(f"stems · audio separator  (v{__version__})")
-        self.geometry("820x900")
-        self.minsize(720, 800)
-        self.grid_columnconfigure(0, weight=1)
+        self.geometry("1300x700")
+        self.minsize(1300, 640)
+        # Two columns. The left (options) absorbs any extra width; the right
+        # column has no weight, so it shrinks to its natural content width —
+        # the action-button row — and the window's right edge hugs the buttons.
+        self.grid_columnconfigure(0, weight=1, minsize=760)
+        self.grid_columnconfigure(1, weight=0)
 
         # Worker plumbing: a fresh queue + cancel flag are created per run.
         self._events: "queue.Queue[Event]" | None = None
@@ -260,6 +264,20 @@ class StemsApp(*_APP_BASES):
             variable=self.vocal_blend_var,
         ).grid(row=0, column=1)
 
+        # Selective output — sum the checked stems into one combined file.
+        # Checkboxes are rebuilt per preset (its output_stems) and the row is
+        # shown only for multi-stem presets; both handled by _on_preset_change.
+        self.mix_row = ctk.CTkFrame(frame, fg_color="transparent")
+        self.mix_row.grid(
+            row=7, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="w"
+        )
+        ctk.CTkLabel(self.mix_row, text="Combine into one file").grid(
+            row=0, column=0, padx=(0, 6), sticky="w"
+        )
+        self.mix_checks = ctk.CTkFrame(self.mix_row, fg_color="transparent")
+        self.mix_checks.grid(row=0, column=1, sticky="w")
+        self.mix_vars: dict[str, ctk.BooleanVar] = {}
+
         self._on_preset_change(DEFAULT_PRESET)
 
     def _build_advanced(self) -> None:
@@ -284,10 +302,13 @@ class StemsApp(*_APP_BASES):
 
     def _build_run_area(self) -> None:
         frame = ctk.CTkFrame(self)
-        frame.grid(row=3, column=0, padx=16, pady=(10, 16), sticky="nsew")
+        # Right column: the run controls + queue, alongside the option sections.
+        frame.grid(row=0, column=1, rowspan=3, padx=(0, 16), pady=(10, 0),
+                   sticky="nsew")
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(5, weight=1)  # queue panel grows
-        frame.grid_rowconfigure(7, weight=1)  # log grows
+        # Root row 3 holds the full-width Log; give it the spare vertical space
+        # so the option sections (rows 0-2) stay packed at their natural height.
         self.grid_rowconfigure(3, weight=1)
 
         buttons = ctk.CTkFrame(frame, fg_color="transparent")
@@ -355,11 +376,19 @@ class StemsApp(*_APP_BASES):
         )
         self.queue_empty.grid(row=0, column=0, padx=8, pady=8, sticky="w")
 
-        ctk.CTkLabel(frame, text="Log", anchor="w", text_color="gray60").grid(
-            row=6, column=0, padx=12, sticky="w"
+        # Log spans the full window width along the bottom, under both columns,
+        # filling what would otherwise be empty space below the option sections.
+        log_frame = ctk.CTkFrame(self)
+        log_frame.grid(
+            row=3, column=0, columnspan=2, padx=16, pady=(10, 16), sticky="nsew"
         )
-        self.log = ctk.CTkTextbox(frame, wrap="word", height=120)
-        self.log.grid(row=7, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        log_frame.grid_columnconfigure(0, weight=1)
+        log_frame.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(
+            log_frame, text="Log", anchor="w", text_color="gray60"
+        ).grid(row=0, column=0, padx=12, pady=(8, 0), sticky="w")
+        self.log = ctk.CTkTextbox(log_frame, wrap="word", height=120)
+        self.log.grid(row=1, column=0, padx=12, pady=(4, 12), sticky="nsew")
         self.log.configure(state="disabled")
 
     # ----------------------------------------------------------- drag-and-drop
@@ -447,6 +476,22 @@ class StemsApp(*_APP_BASES):
             self.vocal_blend_row.grid()
         else:
             self.vocal_blend_row.grid_remove()
+        # Rebuild the selective-output checkboxes for this preset's stems. Only
+        # meaningful for multi-stem presets (combining vocals+instrumental is a
+        # no-op), so the row is hidden for 2-stem plans.
+        for child in self.mix_checks.winfo_children():
+            child.destroy()
+        self.mix_vars = {}
+        if len(preset.output_stems) > 2:
+            for i, stem in enumerate(preset.output_stems):
+                var = ctk.BooleanVar(value=False)
+                self.mix_vars[stem] = var
+                ctk.CTkCheckBox(
+                    self.mix_checks, text=stem, variable=var, width=70,
+                ).grid(row=0, column=i, padx=(0, 8))
+            self.mix_row.grid()
+        else:
+            self.mix_row.grid_remove()
 
     def _initial_dir(self, key: str, fallback: str | None = None) -> str | None:
         """Remembered dir for a dialog if it still exists, else fallback/None."""
@@ -669,6 +714,9 @@ class StemsApp(*_APP_BASES):
         vocal_method = None
         if preset and getattr(PRESETS.get(preset), "vocal_models", []):
             vocal_method = _VOCAL_BLENDS.get(self.vocal_blend_var.get())
+        # Selective output: checked stems are summed into one combined file.
+        selected = [s for s, v in self.mix_vars.items() if v.get()]
+        combine = selected if (preset and selected) else None
 
         segment_text = self.segment_var.get().strip()
         try:
@@ -694,6 +742,7 @@ class StemsApp(*_APP_BASES):
             skip_existing=False,  # GUI always writes a fresh numbered folder
             guitar_source=guitar_source,
             vocal_method=vocal_method,
+            combine=combine,
         )
 
     # -------------------------------------------------------------- event pump

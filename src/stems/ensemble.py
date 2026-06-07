@@ -46,6 +46,18 @@ def _average(arrays: list[np.ndarray]) -> np.ndarray:
     return np.mean(np.stack(arrays, axis=0), axis=0).astype(np.float32)
 
 
+def sum_stems(arrays: list[np.ndarray]) -> np.ndarray:
+    """Sum aligned stem waveforms into one (a partial remix). float32, (ch, n).
+
+    Unlike the ensemble combiners this *adds* rather than averages: stems carry
+    no normalization, so summing a subset reconstructs exactly that part of the
+    mix. Lengths/channels are aligned first (cascade stems can differ by a few
+    tail samples).
+    """
+    arrays = _match_channels(_align_length(arrays))
+    return np.sum(np.stack(arrays, axis=0), axis=0).astype(np.float32)
+
+
 def _max_spec(arrays: list[np.ndarray]) -> np.ndarray:
     try:
         import torch

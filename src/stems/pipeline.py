@@ -19,7 +19,7 @@ from stems.config import RunConfig
 from stems.engines.base import BaseSeparator, SeparationResult
 from stems.engines.demucs_engine import DemucsSeparator
 from stems.engines.uvr_engine import UvrSeparator
-from stems.ensemble import ensemble_results
+from stems.ensemble import ensemble_results, sum_stems
 from stems.presets import Preset, get_preset
 
 # Engines are cheap to construct (heavy work is lazy in .separate).
@@ -326,12 +326,30 @@ def separate_file(
     on_step: StepCallback | None = None,
     guitar_source: str | None = None,
     vocal_method: str | None = None,
+    combine: list[str] | None = None,
 ) -> list[Path]:
-    """Separate ``audio_path`` and write stems into ``out_dir``. Returns paths."""
+    """Separate ``audio_path`` and write stems into ``out_dir``. Returns paths.
+
+    ``combine`` sums the listed stems into a single file (named by joining them
+    with ``+``, e.g. ``vocals+drums``) and writes *only* that mix. Only the
+    listed stems are computed. ``None`` keeps the default per-stem export.
+    """
     result = separate_to_result(
-        audio_path, config, preset, engine, model, stems, on_step, guitar_source,
-        vocal_method,
+        audio_path, config, preset, engine, model, combine or stems, on_step,
+        guitar_source, vocal_method,
     )
+    if combine:
+        present = [n for n in combine if n in result.stems]
+        if not present:
+            raise ValueError(
+                f"None of the requested stems {combine} were produced "
+                f"(available: {sorted(result.stems)})."
+            )
+        mix = sum_stems([result.stems[n] for n in present])
+        return export_stem(
+            out_dir, "+".join(present), mix, result.sample_rate,
+            fmt=fmt, bitdepth=config.bitdepth, mp3_bitrate=config.mp3_bitrate,
+        )
     written: list[Path] = []
     for name, audio in result.stems.items():
         written += export_stem(

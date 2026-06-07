@@ -83,6 +83,13 @@ def separate(
     stems: Optional[str] = typer.Option(
         None, "--stems", help="Comma-separated stems to keep (e.g. vocals,drums)."
     ),
+    mix: Optional[str] = typer.Option(
+        None, "--mix",
+        help=(
+            "Combine these stems into ONE file (e.g. vocals,drums → "
+            "vocals+drums.wav). Only the mix is written. Conflicts with --stems."
+        ),
+    ),
     vocal_method: Optional[str] = typer.Option(
         None, "--vocal-method",
         help=(
@@ -140,8 +147,21 @@ def separate(
             f"({' | '.join(GUITAR_SOURCES)})."
         )
 
+    if mix is not None and stems is not None:
+        raise typer.BadParameter("--mix and --stems cannot be used together.")
+
     resolved_device = resolve_device(device)
     stem_list = [s.strip() for s in stems.split(",")] if stems else None
+    mix_list = [s.strip() for s in mix.split(",")] if mix else None
+    # Validate mix stems against the preset's outputs (skip for raw --model).
+    if mix_list and model is None and preset:
+        valid = set(get_preset(preset).output_stems)
+        unknown = [s for s in mix_list if s not in valid]
+        if unknown:
+            raise typer.BadParameter(
+                f"--mix stems {unknown} are not produced by preset '{preset}' "
+                f"(available: {', '.join(get_preset(preset).output_stems)})."
+            )
 
     config = RunConfig(
         device=resolved_device,
@@ -170,6 +190,7 @@ def separate(
         skip_existing=skip_existing,
         guitar_source=guitar_source,
         vocal_method=vocal_method,
+        combine=mix_list,
     )
 
 
