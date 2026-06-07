@@ -16,6 +16,8 @@ resumable batches.
 (audio track) — anything libsndfile or ffmpeg can decode. Output sample rate
 follows the source (e.g. a 48 kHz WebM yields 48 kHz stems).
 
+![stems desktop GUI](docs/screenshot.png)
+
 ---
 
 ## Capabilities
