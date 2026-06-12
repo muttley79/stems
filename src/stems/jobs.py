@@ -103,6 +103,7 @@ def run_batch(
     guitar_source: str | None = None,
     vocal_method: str | None = None,
     combine: list[str] | None = None,
+    tail_rescue: bool = True,
 ) -> list[JobResult]:
     """Process all discovered inputs; returns one :class:`JobResult` per file."""
     input_path = Path(input_path)
@@ -173,7 +174,7 @@ def run_batch(
                     preset=preset, engine=engine, model=model,
                     stems=stems, fmt=fmt, on_step=on_step,
                     guitar_source=guitar_source, vocal_method=vocal_method,
-                    combine=combine,
+                    combine=combine, tail_rescue=tail_rescue,
                 )
                 results.append(JobResult(f, out_dir, written=written))
                 progress.update(

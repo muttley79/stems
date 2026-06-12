@@ -58,6 +58,9 @@ class JobParams:
     # Vocal-ensemble merge for the "-max" presets: "max_spec" (fuller, coherent)
     # or "average" (smoother). None keeps the preset's default.
     vocal_method: str | None = None
+    # Refill model-gated vocal reverb/echo tails from the mix (twostem/cascade
+    # presets). Fixes volume hiccups on decays; see ensemble.rescue_vocal_tails.
+    tail_rescue: bool = True
     # Selective output: sum these stems into a single "a+b" file, writing only
     # the mix. None = export every stem separately (the default).
     combine: list[str] | None = None
@@ -183,6 +186,7 @@ def _process_one(
                     model=params.model, stems=params.stems, fmt=params.fmt,
                     on_step=on_step, guitar_source=params.guitar_source,
                     vocal_method=params.vocal_method, combine=params.combine,
+                    tail_rescue=params.tail_rescue,
                 )
                 summary["done"] += 1
                 events.put(Event("file_done", {

@@ -171,6 +171,109 @@ def test_separate_file_combine_writes_single_mix(stub_engines, tmp_path):
     assert np.allclose(audio, 0.6, atol=1e-6)  # drums(0.2) + bass(0.4)
 
 
+def _sine(amp, freq=440.0, n=SR, sr=SR):
+    t = np.arange(n, dtype=np.float32) / sr
+    x = (amp * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+    return np.stack([x, x])
+
+
+def _rms_db(x):
+    mid = x[:, SR // 4: -SR // 4]  # skip STFT edge effects
+    return 20 * np.log10(np.sqrt(np.mean(mid ** 2)) + 1e-10)
+
+
+class TestRescueVocalTails:
+    """Numeric behavior of the tail rescue (needs torch)."""
+
+    @pytest.fixture(autouse=True)
+    def _torch(self):
+        pytest.importorskip("torch")
+
+    def test_quiet_tail_lifted_to_residual(self):
+        from stems.ensemble import rescue_vocal_tails
+
+        voc = _sine(0.001)            # ~-63 dB: fully inside the rescue zone
+        res = _sine(0.002)            # the mix holds a 6 dB fuller tail
+        out = rescue_vocal_tails(voc, mix=res, instrumental=np.zeros_like(res))
+        assert abs(_rms_db(out) - _rms_db(res)) < 1.0  # lifted to the residual
+
+    def test_lift_is_capped(self):
+        from stems.ensemble import rescue_vocal_tails
+
+        voc = _sine(0.001)
+        res = _sine(0.00282)          # residual 9 dB hotter than the stem
+        out = rescue_vocal_tails(voc, mix=res, instrumental=np.zeros_like(res))
+        lift = _rms_db(out) - _rms_db(voc)
+        assert 6.0 < lift < 8.7       # bounded by the 8 dB cap, not the residual
+
+    def test_bleed_hot_residual_is_rejected(self):
+        from stems.ensemble import rescue_vocal_tails
+
+        voc = _sine(0.001)
+        res = _sine(0.1)              # residual 40 dB hotter = bleed, not tail
+        out = rescue_vocal_tails(voc, mix=res, instrumental=np.zeros_like(res))
+        assert abs(_rms_db(out) - _rms_db(voc)) < 1.0  # tail-plausibility guard
+
+    def test_no_rescue_above_frequency_ceiling(self):
+        from stems.ensemble import rescue_vocal_tails
+
+        voc = _sine(0.001, freq=6000.0)   # above the 3.5 kHz ceiling
+        res = _sine(0.002, freq=6000.0)
+        out = rescue_vocal_tails(voc, mix=res, instrumental=np.zeros_like(res))
+        assert abs(_rms_db(out) - _rms_db(voc)) < 1.0  # untouched
+
+    def test_silent_vocals_stay_silent(self):
+        from stems.ensemble import rescue_vocal_tails
+
+        voc = np.zeros((2, SR), dtype=np.float32)
+        res = _sine(0.2, freq=1000.0)  # loud instrumental-only residual
+        out = rescue_vocal_tails(voc, mix=res, instrumental=np.zeros_like(res))
+        assert _rms_db(out) < -80.0   # no bleed where the model heard no voice
+
+    def test_loud_vocals_pass_through(self):
+        from stems.ensemble import rescue_vocal_tails
+
+        voc = _sine(0.1)              # ~-23 dB: above the rescue zone
+        out = rescue_vocal_tails(voc, mix=voc, instrumental=np.zeros_like(voc))
+        assert np.allclose(out, voc, atol=1e-4)
+
+
+def test_twostem_applies_tail_rescue(stub_engines, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "_rescued_vocals", lambda path, v, i, sr: v + 1.0
+    )
+    cfg = RunConfig(device="cpu")
+    res = pipeline.separate_to_result(tmp_path / "x.wav", cfg, preset="vocals-max")
+    off = pipeline.separate_to_result(
+        tmp_path / "x.wav", cfg, preset="vocals-max", tail_rescue=False
+    )
+    assert np.allclose(res.stems["vocals"] - off.stems["vocals"], 1.0)
+    # vocals-only runs have no instrumental to rescue from -> skipped
+    only = pipeline.separate_to_result(
+        tmp_path / "x.wav", cfg, preset="vocals-max", stems=["vocals"]
+    )
+    assert np.allclose(only.stems["vocals"], off.stems["vocals"])
+
+
+def test_cascade_applies_tail_rescue(stub_engines, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "_rescued_vocals", lambda path, v, i, sr: v + 1.0
+    )
+    cfg = RunConfig(device="cpu")
+    res = pipeline.separate_to_result(tmp_path / "x.wav", cfg, preset="4stem-max")
+    off = pipeline.separate_to_result(
+        tmp_path / "x.wav", cfg, preset="4stem-max", tail_rescue=False
+    )
+    assert np.allclose(res.stems["vocals"] - off.stems["vocals"], 1.0)
+
+
+def test_rescued_vocals_survives_missing_mix(tmp_path):
+    # Best-effort: an unreadable mix must return the vocals unchanged.
+    voc = _const(0.5)
+    out = pipeline._rescued_vocals(tmp_path / "nope.wav", voc, _const(0.1), SR)
+    assert out is voc
+
+
 def test_cli_mix_and_stems_conflict():
     from typer.testing import CliRunner
 

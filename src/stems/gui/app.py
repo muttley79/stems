@@ -264,6 +264,14 @@ class StemsApp(*_APP_BASES):
             self.vocal_blend_row, values=list(_VOCAL_BLENDS),
             variable=self.vocal_blend_var,
         ).grid(row=0, column=1)
+        # Tail rescue: refill model-gated vocal reverb/echo tails from the mix
+        # (fixes volume hiccups on decays). Applies to the same presets as the
+        # vocal blend, so it lives in (and shows/hides with) this row.
+        self.tail_rescue_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            self.vocal_blend_row, text="Tail rescue",
+            variable=self.tail_rescue_var,
+        ).grid(row=0, column=2, padx=(16, 0))
 
         # Selective output - sum the checked stems into one combined file.
         # Checkboxes are rebuilt per preset (its output_stems) and the row is
@@ -775,6 +783,7 @@ class StemsApp(*_APP_BASES):
             guitar_source=guitar_source,
             vocal_method=vocal_method,
             combine=combine,
+            tail_rescue=bool(self.tail_rescue_var.get()),
         )
 
     # -------------------------------------------------------------- event pump

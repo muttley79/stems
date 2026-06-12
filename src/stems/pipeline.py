@@ -14,12 +14,12 @@ from typing import Callable
 
 import numpy as np
 
-from stems.audio_io import export_stem, write_wav
+from stems.audio_io import export_stem, load_audio, write_wav
 from stems.config import RunConfig
 from stems.engines.base import BaseSeparator, SeparationResult
 from stems.engines.demucs_engine import DemucsSeparator
 from stems.engines.uvr_engine import UvrSeparator
-from stems.ensemble import ensemble_results, sum_stems
+from stems.ensemble import ensemble_results, rescue_vocal_tails, sum_stems
 from stems.presets import Preset, get_preset
 
 # Engines are cheap to construct (heavy work is lazy in .separate).
@@ -102,9 +102,28 @@ def _ensemble_stem(
     return ensemble_results(results, method=method)
 
 
+def _rescued_vocals(
+    audio_path: Path, vocals: np.ndarray, instrumental: np.ndarray, sr: int
+) -> np.ndarray:
+    """Best-effort tail rescue: refill model-gated reverb/echo tails from the mix.
+
+    Needs the original mix and a matching sample rate; the rescue is a quality
+    enhancement, so any failure (unreadable mix, resampled output, missing
+    torch) returns the vocals unchanged rather than sinking the separation.
+    """
+    try:
+        mix, mix_sr = load_audio(Path(audio_path))
+        if mix_sr != sr:
+            return vocals
+        return rescue_vocal_tails(vocals, mix, instrumental, sample_rate=sr)
+    except Exception:
+        return vocals
+
+
 def _run_twostem(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
     on_step: StepCallback | None = None, vocal_method: str | None = None,
+    tail_rescue: bool = True,
 ) -> SeparationResult:
     """Clean 2-stem: ensemble vocal models for vocals, instrumental models for
     instrumental, each merged independently. Avoids dragging a strong model down
@@ -112,6 +131,9 @@ def _run_twostem(
 
     ``vocal_method`` overrides the preset's vocal merge (e.g. ``average`` instead
     of the default ``max_spec``); ``None`` keeps the preset's choice.
+    ``tail_rescue`` refills model-gated vocal reverb tails from the mix (see
+    :func:`stems.ensemble.rescue_vocal_tails`); it needs the instrumental, so a
+    vocals-only ``--stems`` run skips it.
     """
     vocal_method = vocal_method or preset.vocal_method
     want_vocals = stems is None or "vocals" in stems
@@ -141,6 +163,11 @@ def _run_twostem(
         merged["instrumental"] = res.stems["instrumental"]
         sr = res.sample_rate
 
+    if tail_rescue and "vocals" in merged and "instrumental" in merged:
+        merged["vocals"] = _rescued_vocals(
+            audio_path, merged["vocals"], merged["instrumental"], sr
+        )
+
     return SeparationResult(stems=merged, sample_rate=sr)
 
 
@@ -157,7 +184,7 @@ GUITAR_SOURCES = ("instrumental", "no-drums", "mix")
 def _run_cascade(
     audio_path: Path, preset: Preset, config: RunConfig, stems: list[str] | None,
     on_step: StepCallback | None = None, guitar_source: str | None = None,
-    vocal_method: str | None = None,
+    vocal_method: str | None = None, tail_rescue: bool = True,
 ) -> SeparationResult:
     """Cascade: build the cleanest instrumental (ensemble of dedicated
     instrumental models), then run Demucs on it for the non-vocal stems. Vocals
@@ -216,6 +243,10 @@ def _run_cascade(
             tracker,
         )
         merged["vocals"] = voc.stems["vocals"]
+        if tail_rescue:
+            merged["vocals"] = _rescued_vocals(
+                audio_path, merged["vocals"], instrumental, sr
+            )
 
     if need_demucs or want_guitar:
         with tempfile.TemporaryDirectory() as tmp:
@@ -286,6 +317,7 @@ def separate_to_result(
     on_step: StepCallback | None = None,
     guitar_source: str | None = None,
     vocal_method: str | None = None,
+    tail_rescue: bool = True,
 ) -> SeparationResult:
     """Resolve the plan and produce stems in memory.
 
@@ -295,6 +327,8 @@ def separate_to_result(
     audio fed to the dedicated guitar model in a guitar-bearing cascade.
     ``vocal_method`` overrides how the vocal-model ensemble is merged
     (``max_spec`` | ``average``); ``None`` uses the preset's default.
+    ``tail_rescue`` (twostem/cascade vocals) refills model-gated reverb tails
+    from the mix; on by default, disable with the CLI's ``--no-tail-rescue``.
     """
     if model is not None:
         eng = engine or _infer_engine_for_model(model)
@@ -306,10 +340,13 @@ def separate_to_result(
     if p.kind == "ensemble":
         return _run_ensemble(audio_path, p, config, stems, on_step)
     if p.kind == "twostem":
-        return _run_twostem(audio_path, p, config, stems, on_step, vocal_method)
+        return _run_twostem(
+            audio_path, p, config, stems, on_step, vocal_method, tail_rescue
+        )
     if p.kind == "cascade":
         return _run_cascade(
-            audio_path, p, config, stems, on_step, guitar_source, vocal_method
+            audio_path, p, config, stems, on_step, guitar_source, vocal_method,
+            tail_rescue,
         )
     raise ValueError(f"Unsupported preset kind: {p.kind}")
 
@@ -327,6 +364,7 @@ def separate_file(
     guitar_source: str | None = None,
     vocal_method: str | None = None,
     combine: list[str] | None = None,
+    tail_rescue: bool = True,
 ) -> list[Path]:
     """Separate ``audio_path`` and write stems into ``out_dir``. Returns paths.
 
@@ -336,7 +374,7 @@ def separate_file(
     """
     result = separate_to_result(
         audio_path, config, preset, engine, model, combine or stems, on_step,
-        guitar_source, vocal_method,
+        guitar_source, vocal_method, tail_rescue,
     )
     if combine:
         present = [n for n in combine if n in result.stems]

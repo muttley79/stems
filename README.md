@@ -182,6 +182,9 @@ Extras:
   *drums*) and the run writes a single summed file (`vocals+drums.wav`/`.mp3`)
   instead of separate stems. Shown for the multi-stem presets; the CLI equivalent
   is `--mix`.
+- **Tail rescue** checkbox (on by default, next to the vocal-blend picker) -
+  refills model-gated vocal reverb/echo tails from the mix so decays stay smooth
+  instead of hiccuping. CLI equivalent: `--tail-rescue/--no-tail-rescue`.
 - **Drag-and-drop** a file or folder onto the input box; the **Browse** dialogs
   remember the last folder you used (persisted across restarts).
 - **Single instance** - launching again brings the existing window to the front.
@@ -200,6 +203,8 @@ Extras:
 | `-e, --engine` | auto | Engine for `--model`: `demucs` or `uvr`. |
 | `--stems` | all | Comma list of stems to keep, each as its own file (e.g. `vocals,drums`). |
 | `--mix` | - | Combine the listed stems into **one** summed file (e.g. `vocals,drums` → `vocals+drums.wav`); only the mix is written. Mutually exclusive with `--stems`. |
+| `--vocal-method` | preset | Vocal-ensemble merge for `-max` presets: `max_spec` (fuller) or `average` (smoother). |
+| `--tail-rescue / --no-tail-rescue` | on | Refill model-gated vocal reverb/echo tails from the mix (`vocals-max` / `-max` cascades). Vocal models cut quiet decays they aren't sure about, causing volume hiccups; the rescue lifts them back (capped, quiet frames only) so tails decay smoothly without adding bleed. |
 | `--guitar-source` | - | `6stem-max` only (**required**): guitar-model input - `instrumental`, `no-drums`, or `mix`. |
 | `-f, --format` | `both` | `wav`, `mp3`, or `both`. |
 | `--bitdepth` | `24` | WAV bit depth: `16`, `24`, or `32`. |

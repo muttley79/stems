@@ -39,7 +39,7 @@ src/stems/
 │   ├── base.py        # BaseSeparator ABC, SeparationResult
 │   ├── demucs_engine.py  # DemucsSeparator (+ _MODEL_STEMS table)
 │   └── uvr_engine.py     # UvrSeparator (+ MODEL_FILES alias table)
-├── ensemble.py        # ensemble_results(): average / max_spec merge
+├── ensemble.py        # ensemble_results(): average / max_spec merge; rescue_vocal_tails()
 ├── pipeline.py        # separate_to_result()/separate_file(): the orchestrator
 ├── jobs.py            # discover_inputs(), run_batch(): batch + progress + summary
 └── gui/               # optional CustomTkinter desktop front-end (gui extra)

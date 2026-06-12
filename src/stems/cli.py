@@ -97,6 +97,14 @@ def separate(
             "average (smoother). Ignored by single-model presets."
         ),
     ),
+    tail_rescue: bool = typer.Option(
+        True, "--tail-rescue/--no-tail-rescue",
+        help=(
+            "Refill model-gated vocal reverb/echo tails from the mix (twostem/"
+            "cascade presets; needs the instrumental). Fixes volume hiccups on "
+            "decays. On by default."
+        ),
+    ),
     guitar_source: Optional[str] = typer.Option(
         None, "--guitar-source",
         help=(
@@ -191,6 +199,7 @@ def separate(
         guitar_source=guitar_source,
         vocal_method=vocal_method,
         combine=mix_list,
+        tail_rescue=tail_rescue,
     )
 
 
