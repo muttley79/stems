@@ -28,6 +28,14 @@ from stems.gui.worker import Event, JobParams, run_jobs
 from stems.pipeline import GUITAR_SOURCES
 from stems.presets import DEFAULT_PRESET, PRESETS
 
+# Server / registry are optional heavy deps — imported lazily inside _toggle_server.
+try:
+    from stems.registry import JobRegistry
+    from stems.server import WebServer
+    _SERVER_AVAILABLE = True
+except ImportError:
+    _SERVER_AVAILABLE = False
+
 # Optional native file drag-and-drop. tkinterdnd2 wraps the tkdnd Tcl extension;
 # if it isn't installed the window still works (Browse buttons), drops are just
 # not wired up. See _enable_dnd / _register_drop below.
@@ -72,8 +80,9 @@ class QueuedJob:
     """One queued separation job plus its row widgets (UI-thread state only)."""
 
     id: int
-    params: JobParams
+    params: JobParams | None   # None for web-sourced jobs (params live on the server)
     label: str
+    source: str = "gui"        # "gui" | "web"
     status: str = "queued"
     started: float | None = None      # monotonic time the job began
     elapsed: float | None = None      # final duration once finished
@@ -117,6 +126,15 @@ class StemsApp(*_APP_BASES):
         self._current_job_id: int | None = None
         self._run_started: float | None = None
         self._ticking = False
+
+        # Server mode: shared registry + web server (optional, lazy-started).
+        self._registry: "JobRegistry | None" = None
+        self._web_server: "WebServer | None" = None
+        self._server_events: "queue.Queue[Event] | None" = None
+        self._server_enabled = False
+        # IDs of jobs submitted to registry in the current GUI-initiated run;
+        # used to detect when the run finishes so we can re-enable the Run button.
+        self._server_pending_ids: set[int] = set()
 
         # Persisted prefs (e.g. last-browsed folders for the file dialogs).
         self._settings = load_settings()
@@ -315,7 +333,7 @@ class StemsApp(*_APP_BASES):
         frame.grid(row=0, column=1, rowspan=3, padx=(0, 16), pady=(10, 0),
                    sticky="nsew")
         frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(5, weight=1)  # queue panel grows
+        frame.grid_rowconfigure(6, weight=1)  # queue panel grows
         # Root row 3 holds the full-width Log; give it the spare vertical space
         # so the option sections (rows 0-2) stay packed at their natural height.
         # minsize keeps a usable log even with the tallest preset (6stem-max).
@@ -342,8 +360,25 @@ class StemsApp(*_APP_BASES):
         )
         self.open_btn.grid(row=0, column=3)
 
+        # Server toggle row — shown dimmed when server deps are missing.
+        server_row = ctk.CTkFrame(frame, fg_color="transparent")
+        server_row.grid(row=1, column=0, padx=12, pady=(0, 4), sticky="ew")
+        self.server_btn = ctk.CTkButton(
+            server_row, text="Enable LAN Server",
+            command=self._toggle_server, width=160,
+            fg_color="#2a4a2a" if _SERVER_AVAILABLE else "gray30",
+            hover_color="#3a6a3a" if _SERVER_AVAILABLE else "gray30",
+            state="normal" if _SERVER_AVAILABLE else "disabled",
+        )
+        self.server_btn.grid(row=0, column=0, padx=(0, 10))
+        self.server_url_lbl = ctk.CTkLabel(
+            server_row, text="" if _SERVER_AVAILABLE else "(install server extra to enable)",
+            text_color="gray50", font=ctk.CTkFont(size=11),
+        )
+        self.server_url_lbl.grid(row=0, column=1, sticky="w")
+
         status_row = ctk.CTkFrame(frame, fg_color="transparent")
-        status_row.grid(row=1, column=0, padx=12, pady=(2, 0), sticky="ew")
+        status_row.grid(row=2, column=0, padx=12, pady=(2, 0), sticky="ew")
         status_row.grid_columnconfigure(0, weight=1)
         self.status_var = ctk.StringVar(value="Ready.")
         ctk.CTkLabel(status_row, textvariable=self.status_var, anchor="w").grid(
@@ -357,14 +392,14 @@ class StemsApp(*_APP_BASES):
 
         self.step_bar = ctk.CTkProgressBar(frame)
         self.step_bar.set(0)
-        self.step_bar.grid(row=2, column=0, padx=12, pady=(4, 2), sticky="ew")
+        self.step_bar.grid(row=3, column=0, padx=12, pady=(4, 2), sticky="ew")
 
         self.file_bar = ctk.CTkProgressBar(frame, height=8)
         self.file_bar.set(0)
-        self.file_bar.grid(row=3, column=0, padx=12, pady=(0, 8), sticky="ew")
+        self.file_bar.grid(row=4, column=0, padx=12, pady=(0, 8), sticky="ew")
 
         queue_header = ctk.CTkFrame(frame, fg_color="transparent")
-        queue_header.grid(row=4, column=0, padx=12, pady=(0, 2), sticky="ew")
+        queue_header.grid(row=5, column=0, padx=12, pady=(0, 2), sticky="ew")
         queue_header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             queue_header, text="Queue", font=ctk.CTkFont(size=13, weight="bold"),
@@ -377,7 +412,7 @@ class StemsApp(*_APP_BASES):
         self.clear_btn.grid(row=0, column=1, sticky="e")
 
         self.queue_frame = ctk.CTkScrollableFrame(frame, height=150)
-        self.queue_frame.grid(row=5, column=0, padx=12, pady=(0, 8), sticky="nsew")
+        self.queue_frame.grid(row=6, column=0, padx=12, pady=(0, 8), sticky="nsew")
         self.queue_frame.grid_columnconfigure(0, weight=1)
         self.queue_empty = ctk.CTkLabel(
             self.queue_frame,
@@ -589,16 +624,29 @@ class StemsApp(*_APP_BASES):
         params = self._collect_params()
         if params is None:
             return False
-        self._next_job_id += 1
+
+        if self._registry is not None:
+            # Server mode: let the registry own the ID (avoids conflicts with web jobs).
+            job_id = self._registry.allocate_id()
+        else:
+            self._next_job_id += 1
+            job_id = self._next_job_id
+
         job = QueuedJob(
-            id=self._next_job_id, params=params, label=self._job_label(params)
+            id=job_id, params=params, label=self._job_label(params), source="gui"
         )
         self._queue.append(job)
         self._jobs_by_id[job.id] = job
         self._render_job_row(job)
-        # If a run is already in flight, hand the new job to the live worker queue.
-        if self._running and self._job_q is not None:
+
+        if self._registry is not None:
+            # In server mode jobs are submitted when the user clicks Run (not here),
+            # so we do nothing else now.
+            pass
+        elif self._running and self._job_q is not None:
+            # Non-server: hand the new job to the live worker queue immediately.
             self._job_q.put((job.id, job.params))
+
         self._update_run_button()
         return True
 
@@ -608,18 +656,25 @@ class StemsApp(*_APP_BASES):
         # leave a zero-height gap, which the grid collapses visually.
         row = ctk.CTkFrame(self.queue_frame)
         row.grid(row=job.id, column=0, sticky="ew", padx=2, pady=2)
-        row.grid_columnconfigure(0, weight=1)
+        row.grid_columnconfigure(1, weight=1)
+        # Source badge: "web" jobs get a coloured marker so users can tell them apart.
+        src_badge = ctk.CTkLabel(
+            row, text=job.source, width=36,
+            text_color="#3b8ed0" if job.source == "web" else "gray55",
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        src_badge.grid(row=0, column=0, padx=(8, 2), pady=4)
         name = ctk.CTkLabel(row, text=job.label, anchor="w")
-        name.grid(row=0, column=0, padx=(8, 6), pady=4, sticky="ew")
+        name.grid(row=0, column=1, padx=(2, 6), pady=4, sticky="ew")
         time_lbl = ctk.CTkLabel(row, text="", width=52, text_color="gray60")
-        time_lbl.grid(row=0, column=1, padx=4)
+        time_lbl.grid(row=0, column=2, padx=4)
         badge = ctk.CTkLabel(row, text="", width=72)
-        badge.grid(row=0, column=2, padx=4)
+        badge.grid(row=0, column=3, padx=4)
         # Clicking a finished job's "done" badge opens its output folder. Bound
         # once here; the handler is a no-op unless the job is done.
         badge.bind("<Button-1>", lambda _e, j=job: self._on_badge_click(j))
         action = ctk.CTkButton(row, text="✕", width=30, fg_color="gray40")
-        action.grid(row=0, column=3, padx=(4, 8))
+        action.grid(row=0, column=4, padx=(4, 8))
         job.widgets = {
             "row": row, "name": name, "time": time_lbl, "badge": badge,
             "action": action,
@@ -647,11 +702,18 @@ class StemsApp(*_APP_BASES):
                 command=lambda j=job: self._on_cancel_task(j), state="normal",
             )
         elif job.status == "queued":
-            action.configure(
-                text="✕", width=30, fg_color="gray40",
-                command=lambda j=job: self._on_remove_job(j),
-                state="disabled" if self._running else "normal",
-            )
+            if job.source == "web":
+                action.configure(
+                    text="✕", width=30, fg_color="gray40",
+                    command=lambda j=job: self._on_cancel_web_job(j),
+                    state="normal",
+                )
+            else:
+                action.configure(
+                    text="✕", width=30, fg_color="gray40",
+                    command=lambda j=job: self._on_remove_job(j),
+                    state="disabled" if self._running else "normal",
+                )
         else:  # done / failed / skipped / cancelled
             action.configure(text="✓" if job.status == "done" else "-",
                              width=30, fg_color="gray30", state="disabled")
@@ -661,6 +723,11 @@ class StemsApp(*_APP_BASES):
         """Open the job's output folder when its "done" badge is clicked."""
         if job.status == "done" and job.out_dir is not None:
             self._reveal_folder(job.out_dir)
+
+    def _on_cancel_web_job(self, job: QueuedJob) -> None:
+        """Cancel a web-submitted job via the registry."""
+        if self._registry is not None and job.status == "queued":
+            self._registry.cancel_job(job.id)
 
     def _on_remove_job(self, job: QueuedJob) -> None:
         if self._running or job.status != "queued":
@@ -686,9 +753,75 @@ class StemsApp(*_APP_BASES):
         """Cancel just the running job; the queue advances to the next one."""
         if job.id != self._current_job_id:
             return
-        self._skip_current.set()
+        if self._registry is not None:
+            self._registry.cancel_job(job.id)
+        else:
+            self._skip_current.set()
         self.status_var.set("Cancelling this task…")
         job.widgets["action"].configure(state="disabled")
+
+    # ------------------------------------------------------------------ server
+
+    def _toggle_server(self) -> None:
+        if self._server_enabled:
+            self._stop_server()
+        else:
+            self._start_server()
+
+    def _start_server(self) -> None:
+        try:
+            from stems.registry import JobRegistry
+            from stems.server import WebServer
+        except ImportError:
+            self._append_log(
+                "Server dependencies not installed. "
+                "Run: pip install -e \".[server]\""
+            )
+            return
+
+        output_root = Path(self.output_var.get().strip() or "output") / "web-jobs"
+        self._registry = JobRegistry(output_root=output_root)
+        self._server_events = queue.Queue()
+        self._registry.subscribe(self._server_events)
+        self._registry.start_worker()
+
+        try:
+            self._web_server = WebServer(self._registry)
+            self._web_server.start()
+        except Exception as exc:
+            self._append_log(f"Failed to start web server: {exc}")
+            self._registry.stop()
+            self._registry = None
+            self._server_events = None
+            return
+
+        self._server_enabled = True
+        url = self._web_server.url
+        self.server_btn.configure(
+            text="Stop Server", fg_color="#6a2a2a", hover_color="#8a3a3a"
+        )
+        self.server_url_lbl.configure(text=url, text_color="#3b8ed0")
+        self._append_log(f"LAN server started at {url}")
+        # Start the continuous server-event drain loop.
+        self.after(_POLL_MS, self._drain_server_events)
+
+    def _stop_server(self) -> None:
+        if self._web_server is not None:
+            self._web_server.stop()
+            self._web_server = None
+        if self._registry is not None:
+            if self._server_events is not None:
+                self._registry.unsubscribe(self._server_events)
+            self._registry.stop()
+            self._registry = None
+        self._server_events = None
+        self._server_enabled = False
+        self._server_pending_ids.clear()
+        self.server_btn.configure(
+            text="Enable LAN Server", fg_color="#2a4a2a", hover_color="#3a6a3a"
+        )
+        self.server_url_lbl.configure(text="", text_color="gray50")
+        self._append_log("LAN server stopped.")
 
     # --------------------------------------------------------------------- run
 
@@ -715,6 +848,24 @@ class StemsApp(*_APP_BASES):
         self.after(_POLL_MS, self._drain_events)
 
     def _start_queue_run(self, pending: list[QueuedJob]) -> None:
+        if self._registry is not None:
+            # Server mode: submit pending jobs to the shared registry worker.
+            # _drain_server_events already runs continuously; we just need to
+            # track which IDs belong to this GUI-initiated run.
+            self._server_pending_ids = {j.id for j in pending}
+            self._set_running(True)
+            self._run_started = time.monotonic()
+            self._clear_log()
+            self.step_bar.set(0)
+            self.file_bar.set(0)
+            self._arm_ticker()
+            plural = "job" if len(pending) == 1 else "jobs"
+            self.status_var.set(f"Starting {len(pending)} {plural}…")
+            for job in pending:
+                self._registry.submit_job(job.params, job.label, "gui", job_id=job.id)
+            return
+
+        # Non-server: original path — spawn a local worker thread.
         self._prepare_run()
         self._job_q = queue.Queue()
         for job in pending:
@@ -729,7 +880,10 @@ class StemsApp(*_APP_BASES):
         self._thread.start()
 
     def _on_cancel(self) -> None:
-        self._cancel.set()
+        if self._registry is not None:
+            self._registry.cancel_all()
+        else:
+            self._cancel.set()
         self.status_var.set("Cancelling after the current file…")
         self.cancel_btn.configure(state="disabled")
 
@@ -806,17 +960,57 @@ class StemsApp(*_APP_BASES):
         else:
             self.after(_POLL_MS, self._drain_events)
 
+    def _drain_server_events(self) -> None:
+        """Continuous poll for registry broadcast events (server mode only)."""
+        if not self._server_enabled or self._server_events is None:
+            return
+        try:
+            while True:
+                ev = self._server_events.get_nowait()
+                self._apply_event(ev)
+        except queue.Empty:
+            pass
+        # Re-arm for as long as server mode is on.
+        self.after(_POLL_MS, self._drain_server_events)
+
     def _apply_event(self, ev: Event) -> bool:
         """Render one event. Returns True when the run is finished."""
         kind, data = ev.kind, ev.data
-        if kind == "job_start":
+        if kind == "job_queued":
+            # A job was submitted to the registry. If it came from the web,
+            # add a placeholder row so it shows up in the GUI queue.
+            if data.get("source") == "web" and data["id"] not in self._jobs_by_id:
+                self._add_web_job_row(data)
+        elif kind == "job_start":
             self._on_job_start(data)
         elif kind == "job_done":
+            # Capture output dir from the registry event before finishing.
+            out_dir = data.get("out_dir")
+            if out_dir:
+                job = self._jobs_by_id.get(data["id"])
+                if job is not None:
+                    job.out_dir = Path(out_dir)
+                    self._last_out_dir = job.out_dir
+                    self.open_btn.configure(state="normal")
             self._finish_job(data["id"], "done")
+            # In server mode, check if this GUI-initiated run is complete.
+            if self._registry is not None:
+                self._server_pending_ids.discard(data["id"])
+                if not self._server_pending_ids and self._running:
+                    self.status_var.set("All jobs complete.")
+                    self._set_running(False)
         elif kind == "job_error":
             self._finish_job(data["id"], "failed")
+            if self._registry is not None:
+                self._server_pending_ids.discard(data["id"])
+                if not self._server_pending_ids and self._running:
+                    self._set_running(False)
         elif kind == "job_cancelled":
             self._finish_job(data["id"], "cancelled")
+            if self._registry is not None:
+                self._server_pending_ids.discard(data["id"])
+                if not self._server_pending_ids and self._running:
+                    self._set_running(False)
         elif kind == "queue_done":
             self._end_download()
             self._finish(data)
@@ -885,6 +1079,16 @@ class StemsApp(*_APP_BASES):
         self._set_row_state(job)
         if self._current_job_id == job_id:
             self._current_job_id = None
+
+    def _add_web_job_row(self, data: dict) -> None:
+        """Create a GUI queue row for a job submitted by a web client."""
+        job_id = data["id"]
+        label = f"[web] {data.get('label', 'upload')}"
+        job = QueuedJob(id=job_id, params=None, label=label, source="web")
+        self._queue.append(job)
+        self._jobs_by_id[job_id] = job
+        self._render_job_row(job)
+        self._update_run_button()
 
     def _finish(self, summary: dict) -> None:
         self.file_bar.set(1)

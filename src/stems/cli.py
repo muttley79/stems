@@ -4,6 +4,7 @@ Commands:
     stems separate INPUT [OUTPUT_DIR]   separate a file or folder into stems
     stems presets                       list presets and their stem outputs
     stems models                        list available models per backend
+    stems serve                         start the LAN web server
 
 Run ``stems --help`` or ``stems separate --help`` for full option docs.
 """
@@ -11,6 +12,7 @@ Run ``stems --help`` or ``stems separate --help`` for full option docs.
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -238,6 +240,46 @@ def models() -> None:
     console.print(
         "[dim]Tip: run `audio-separator --list_models` for the full UVR zoo.[/dim]"
     )
+
+
+@app.command()
+def serve(
+    port: int = typer.Option(8765, help="Port to listen on."),
+    host: str = typer.Option("0.0.0.0", help="Host/interface to bind."),
+    output_dir: Path = typer.Option(
+        Path("stems-web-output"),
+        help="Root directory for uploaded files and separated stems.",
+    ),
+) -> None:
+    """Start the LAN web server (headless — no GUI required)."""
+    try:
+        from stems.registry import JobRegistry
+        from stems.server import WebServer
+    except ImportError as exc:
+        console.print(
+            f"[red]Server dependencies missing.[/red] "
+            f"Install with: pip install -e \".[server]\"\n{exc}"
+        )
+        raise typer.Exit(1)
+
+    registry = JobRegistry(output_root=output_dir)
+    registry.start_worker()
+
+    server = WebServer(registry, host=host, port=port)
+    server.start()
+
+    console.print(
+        f"[bold]Stems server[/bold] running at "
+        f"[cyan]{server.url}[/cyan]\n"
+        f"Output directory: [dim]{output_dir.resolve()}[/dim]\n"
+        f"Press [bold]Ctrl+C[/bold] to stop."
+    )
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Shutting down…[/dim]")
+        server.stop()
+        registry.stop()
 
 
 if __name__ == "__main__":
