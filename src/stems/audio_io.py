@@ -17,6 +17,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -46,27 +47,40 @@ def _to_channels_first(data: np.ndarray) -> np.ndarray:
     return data.T
 
 
-def load_audio(path: Path) -> tuple[np.ndarray, int]:
-    """Load any supported file as float32 ``(channels, samples)`` + sample rate."""
+def load_audio(path: Path, target_sr: int | None = None) -> tuple[np.ndarray, int]:
+    """Load any supported file as float32 ``(channels, samples)`` + sample rate.
+
+    ``target_sr`` forces the result to that rate, re-decoding through ffmpeg's
+    resampler when the source differs. Used to line the original mix up with
+    backend output, which audio-separator always emits at 44.1 kHz.
+    """
     path = Path(path)
     if not path.is_file():
         raise AudioIOError(f"Input file not found: {path}")
 
     try:
         data, sr = sf.read(str(path), dtype="float32", always_2d=False)
-        return np.ascontiguousarray(_to_channels_first(data)), int(sr)
+        audio, sr = np.ascontiguousarray(_to_channels_first(data)), int(sr)
     except Exception:
         # Fall back to ffmpeg for formats libsndfile can't decode.
         if not ffmpeg_available():
             raise AudioIOError(
                 f"Could not read {path} with libsndfile and ffmpeg is not installed."
             )
-        return _load_via_ffmpeg(path)
+        audio, sr = _load_via_ffmpeg(path)
+
+    if target_sr is not None and sr != int(target_sr):
+        if not ffmpeg_available():
+            raise AudioIOError(
+                f"Resampling {path} to {target_sr} Hz needs ffmpeg, which is not installed."
+            )
+        audio, sr = _load_via_ffmpeg(path, target_sr=int(target_sr))
+    return audio, sr
 
 
-def _load_via_ffmpeg(path: Path) -> tuple[np.ndarray, int]:
+def _load_via_ffmpeg(path: Path, target_sr: int | None = None) -> tuple[np.ndarray, int]:
     """Decode to a temporary WAV with ffmpeg, then read it back."""
-    sr = _probe_sample_rate(path) or 44100
+    sr = target_sr or _probe_sample_rate(path) or 44100
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "decoded.wav"
         cmd = [
@@ -99,10 +113,25 @@ def _probe_sample_rate(path: Path) -> int | None:
 
 
 def write_wav(path: Path, audio: np.ndarray, sr: int, bitdepth: int = 24) -> Path:
-    """Write float32 ``(channels, samples)`` audio to a PCM WAV."""
+    """Write float32 ``(channels, samples)`` audio to a PCM WAV.
+
+    Stems carry no normalization, so one can legitimately peak above full scale
+    (an instrumental is ``mix - vocals``, which can exceed the mix). Integer PCM
+    can't represent that and libsndfile saturates silently, so warn instead -
+    ``--bitdepth 32`` writes float and preserves it exactly.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     subtype = {16: "PCM_16", 24: "PCM_24", 32: "FLOAT"}.get(bitdepth, "PCM_24")
+    if subtype != "FLOAT":
+        peak = float(np.abs(audio).max()) if audio.size else 0.0
+        if peak > 1.0:
+            warnings.warn(
+                f"{path.name} peaks at {20 * np.log10(peak):+.2f} dBFS and will clip "
+                f"at {bitdepth}-bit; use --bitdepth 32 to keep it intact.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     # soundfile expects (samples, channels).
     sf.write(str(path), np.ascontiguousarray(audio.T), sr, subtype=subtype)
     return path

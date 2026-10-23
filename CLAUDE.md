@@ -58,9 +58,16 @@ tests/                 # pytest; backends are stubbed, no models/GPU needed
   sample rate carried alongside. `audio_io` handles the `(samples, channels)` ↔
   channels-first conversion at the libsndfile boundary.
 - **No loudness normalization** anywhere - stems must remain summable back to the mix.
+  `audio-separator` violates this on its own (it peak-limits to 0.9 at three
+  points per pass, with a different factor per stem), so `uvr_engine` neutralizes
+  it via `ensure_no_normalize_patch()`. Verify with `tools/ab_compare.py`: the
+  `mix - sum(stems)` line should read about -160 dB, not -15 dB.
 - A separation returns a `SeparationResult` (`{stem_name: ndarray}` + `sample_rate`).
 - Stem names are canonical lowercase: `vocals, instrumental, drums, bass, other,
-  guitar, piano`.
+  guitar, piano`, plus `lead_vocals, back_vocals` (karaoke models) and
+  `kick, snare, toms, hh, ride, crash` (drumsep).
+- Stems can legitimately peak above full scale (an instrumental is `mix - vocals`).
+  `write_wav` warns when an integer-PCM export would clip; `--bitdepth 32` avoids it.
 
 ## Separation plans (presets)
 
@@ -95,7 +102,17 @@ by `pipeline.py`:
 pytest                              # fast; stubs backends, no downloads
 stems separate song.mp3 out\ -p 6stem
 python -m stems presets
+
+# A/B two configurations or two model line-ups, with levels, summability and
+# chunk-seam timestamps. Writes both stem sets side by side for listening.
+python tools\ab_compare.py song.flac --preset vocals-max `
+    --a "uvr_overlap=1,shifts=0" --b "uvr_overlap=4,shifts=1"
 ```
+
+Quality changes are judged **by ear**, with measurements as supporting evidence -
+never on SDR alone. Note that model SDR figures describe the model's *target*
+stem; a model targeting vocals derives its instrumental as `mix - vocals`, so a
+high instrumental score doesn't mean it's an instrumental model.
 
 When adding code, prefer extending `pipeline.py`/`presets.py` over touching the CLI.
 Keep new heavy dependencies lazy-imported. Match the existing channels-first float32
@@ -104,8 +121,23 @@ audio convention and avoid introducing normalization.
 ## Gotchas
 
 - Don't add MP3 support expectations to libsndfile - MP3 always goes through ffmpeg.
-- `uvr_engine` classifies stems by **filename keywords** from audio-separator's
-  output (`_classify_stem`); if a new model names files differently, extend
-  `_STEM_KEYWORDS`.
+- `uvr_engine` classifies stems from the **parenthesised tag** in audio-separator's
+  output filename (`_classify_stem`, `_STEM_TAG_RE`), falling back to a keyword
+  scan. Match on the tag, not the whole name - the filename also contains the
+  model name and the user's filename, so `inst_bleedless` writes its *vocals* as
+  `track_(Vocals)_mel_band_roformer_instrumental_bleedless_v2_gabox.wav`. Extend
+  `_STEM_TAGS` (exact tags) or `_STEM_KEYWORDS`; use `_STEM_ALIASES` when a
+  model's tags lie about the content (karaoke models tag lead/backing vocals as
+  Vocals/Instrumental).
+- `uvr_engine` monkeypatches `audio-separator` in four places, all lazy and
+  idempotent (`ensure_*_patch`): Roformer `mlp_expansion_factor`, architecture
+  detection from nested configs, float32 WAV output, and the normalization no-op.
+  Each docstring records the upstream behavior it works around - check whether
+  the patch is still needed after an `audio-separator` upgrade.
+- **`mdxc_params["overlap"]` means different things per architecture**: a divisor
+  for MDX23C, but a *step in seconds* for Roformer. The library default of 8
+  gives 8 s-chunk models (`bs_roformer`, `kim_ft`) exactly zero overlap.
+  `apply_chunk_overlap()` derives the step from each model's own
+  `inference.num_overlap`, capped by `RunConfig.uvr_overlap`.
 - `--device cuda` silently falls back to CPU when CUDA is unavailable (by design).
 - First run downloads weights to `./models/` (or `STEMS_MODEL_DIR`); expect a delay.

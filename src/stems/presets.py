@@ -30,9 +30,6 @@ class Preset:
     output_stems: list[str] = field(default_factory=list)
     ensemble_method: str = "average"  # used for the instrumental ensemble
     vocal_method: str = "average"     # used for the vocal ensemble (may differ)
-    # cascade-only: which model isolates vocals before the residual pass.
-    vocal_engine: str = "uvr"
-    vocal_model: str = "bs_roformer"
     # cascade-only: dedicated UVR model used to isolate the guitar stem, replacing
     # the (weak) guitar head of the demucs pass. Empty = don't run a guitar model.
     # The audio it runs on is chosen at runtime via ``guitar_source`` (the CLI's

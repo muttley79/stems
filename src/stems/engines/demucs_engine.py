@@ -65,12 +65,17 @@ class DemucsSeparator(BaseSeparator):
         wav = (wav - ref.mean()) / (ref.std() + 1e-8)
 
         with torch.no_grad():
+            # `shifts` averages predictions over random time offsets, which
+            # cancels the model's position-dependent error. apply_model defaults
+            # it to 0; the reference Demucs CLI uses 1 and UVR uses 2. Cost is
+            # linear, and htdemucs_ft is a bag of 4 models, so it multiplies.
             out = apply_model(
                 net,
                 wav[None],
                 device=config.device,
                 segment=config.segment,
                 overlap=config.overlap,
+                shifts=config.shifts,
                 progress=False,
             )[0]
         out = out * ref.std() + ref.mean()

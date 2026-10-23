@@ -107,14 +107,14 @@ def _rescued_vocals(
 ) -> np.ndarray:
     """Best-effort tail rescue: refill model-gated reverb/echo tails from the mix.
 
-    Needs the original mix and a matching sample rate; the rescue is a quality
-    enhancement, so any failure (unreadable mix, resampled output, missing
-    torch) returns the vocals unchanged rather than sinking the separation.
+    The mix is loaded at the stem rate - audio-separator always emits 44.1 kHz,
+    so a 48 kHz source would otherwise mismatch and silently skip the rescue for
+    the entire file. The rescue is a quality enhancement, so any failure
+    (unreadable mix, missing ffmpeg or torch) returns the vocals unchanged
+    rather than sinking the separation.
     """
     try:
-        mix, mix_sr = load_audio(Path(audio_path))
-        if mix_sr != sr:
-            return vocals
+        mix, _ = load_audio(Path(audio_path), target_sr=sr)
         return rescue_vocal_tails(vocals, mix, instrumental, sample_rate=sr)
     except Exception:
         return vocals

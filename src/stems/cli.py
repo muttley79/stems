@@ -33,7 +33,7 @@ for _stream in (sys.stdout, sys.stderr):
 from stems import __version__
 from stems.config import (
     DEFAULT_BITDEPTH, DEFAULT_MP3_BITRATE, DEFAULT_OVERLAP, DEFAULT_SEGMENT,
-    RunConfig, resolve_device,
+    DEFAULT_SHIFTS, DEFAULT_UVR_OVERLAP, RunConfig, resolve_device,
 )
 from stems.engines.demucs_engine import _MODEL_STEMS as DEMUCS_MODELS
 from stems.engines.uvr_engine import MODEL_FILES as UVR_MODELS
@@ -136,6 +136,19 @@ def separate(
     overlap: float = typer.Option(
         DEFAULT_OVERLAP, "--overlap", help="Demucs chunk overlap (0-1); higher = better."
     ),
+    shifts: int = typer.Option(
+        DEFAULT_SHIFTS,
+        "--shifts",
+        help="Demucs random-shift averaging passes; 0 = off, 2 = best. Linear cost.",
+    ),
+    uvr_overlap: int = typer.Option(
+        DEFAULT_UVR_OVERLAP,
+        "--uvr-overlap",
+        help=(
+            "Max Roformer overlap-add factor; higher = fewer chunk seams, "
+            "proportionally slower. 1 = leave the backend default alone."
+        ),
+    ),
 ) -> None:
     """Separate INPUT into stems written under OUTPUT_DIR."""
     if fmt not in ("wav", "mp3", "both"):
@@ -163,7 +176,7 @@ def separate(
     resolved_device = resolve_device(device)
     stem_list = [s.strip() for s in stems.split(",")] if stems else None
     mix_list = [s.strip() for s in mix.split(",")] if mix else None
-    # Validate mix stems against the preset's outputs (skip for raw --model).
+    # Validate mix/stems selections against the preset's outputs (skip for raw --model).
     if mix_list and model is None and preset:
         valid = set(get_preset(preset).output_stems)
         unknown = [s for s in mix_list if s not in valid]
@@ -172,11 +185,21 @@ def separate(
                 f"--mix stems {unknown} are not produced by preset '{preset}' "
                 f"(available: {', '.join(get_preset(preset).output_stems)})."
             )
+    if stem_list and model is None and preset:
+        valid = set(get_preset(preset).output_stems)
+        unknown = [s for s in stem_list if s not in valid]
+        if unknown:
+            raise typer.BadParameter(
+                f"--stems {unknown} are not produced by preset '{preset}' "
+                f"(available: {', '.join(get_preset(preset).output_stems)})."
+            )
 
     config = RunConfig(
         device=resolved_device,
         segment=segment,
         overlap=overlap,
+        shifts=shifts,
+        uvr_overlap=uvr_overlap,
         bitdepth=bitdepth,
         mp3_bitrate=DEFAULT_MP3_BITRATE,
     )

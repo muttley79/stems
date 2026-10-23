@@ -6,14 +6,15 @@ torchaudio>=2.1
 
 # Separation engines
 demucs>=4.0
-audio-separator>=0.18
+audio-separator>=0.44
 # audio-separator imports onnxruntime at load time. Install the GPU build to run
 # MDX/VR models on CUDA (Roformer/Demucs use torch directly). CPU-only machines
 # can use plain `onnxruntime` instead.
 onnxruntime-gpu>=1.17
 
 # Audio I/O
-numpy>=1.24,<2.0
+# audio-separator >= 0.44 requires numpy 2.x; demucs 4.0.1 runs fine on it.
+numpy>=2.0
 soundfile>=0.12
 
 # CLI / UX

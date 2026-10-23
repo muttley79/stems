@@ -21,6 +21,16 @@ MODEL_DIR = Path(os.environ.get("STEMS_MODEL_DIR", REPO_ROOT / "models"))
 # memory; higher `overlap` improves quality at the cost of speed.
 DEFAULT_SEGMENT: float | None = 7.8  # seconds per chunk (None = model default)
 DEFAULT_OVERLAP: float = 0.25
+# Random-shift averaging in Demucs (`apply_model(shifts=...)`). The library
+# default is 0 (off); the reference Demucs CLI uses 1 and UVR uses 2. Runtime is
+# linear in this, and `htdemucs_ft` is already a bag of 4 models, so it compounds.
+DEFAULT_SHIFTS: int = 1
+
+# Ceiling on the Roformer overlap-add factor used by the UVR backend. Each model
+# asks for its own `inference.num_overlap`; this caps how much of that we honour,
+# since runtime scales with it. See `uvr_engine.apply_chunk_overlap`. 1 disables
+# the override and leaves audio-separator's (broken for Roformer) default alone.
+DEFAULT_UVR_OVERLAP: int = 4
 
 # Export defaults.
 DEFAULT_BITDEPTH = 24
@@ -57,6 +67,8 @@ class RunConfig:
     device: str = "cpu"
     segment: float | None = DEFAULT_SEGMENT
     overlap: float = DEFAULT_OVERLAP
+    shifts: int = DEFAULT_SHIFTS
+    uvr_overlap: int = DEFAULT_UVR_OVERLAP
     bitdepth: int = DEFAULT_BITDEPTH
     mp3_bitrate: str = DEFAULT_MP3_BITRATE
     model_dir: Path = MODEL_DIR

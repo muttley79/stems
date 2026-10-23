@@ -55,6 +55,14 @@ _BITDEPTHS = ["16", "24", "32"]
 # the merge flutter). Insertion order = button order; first is the default.
 _VOCAL_BLENDS = {"Max-spec (full)": "max_spec", "Average (smooth)": "average"}
 _DEFAULT_VOCAL_BLEND = next(iter(_VOCAL_BLENDS))
+# Which stems to write for a 2-stem (vocals + instrumental) preset (label shown
+# → stems filter). Insertion order = button order; first is the default.
+_OUTPUT_CHOICES: dict[str, list[str] | None] = {
+    "Both": None,
+    "Vocals only": ["vocals"],
+    "Instrumental only": ["instrumental"],
+}
+_DEFAULT_OUTPUT_CHOICE = next(iter(_OUTPUT_CHOICES))
 _POLL_MS = 100
 _SHOW_POLL_MS = 300  # how often the UI checks for a "come to front" ping
 _TICK_MS = 1000      # elapsed-time refresh interval
@@ -305,6 +313,22 @@ class StemsApp(*_APP_BASES):
         self.mix_checks.grid(row=0, column=1, sticky="w")
         self.mix_vars: dict[str, ctk.BooleanVar] = {}
 
+        # Output selector - for a plain 2-stem preset (vocals + instrumental),
+        # pick whether to write both, vocals only, or instrumental only. Shown
+        # only for those presets; handled by _on_preset_change.
+        self.output_select_row = ctk.CTkFrame(frame, fg_color="transparent")
+        self.output_select_row.grid(
+            row=8, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="w"
+        )
+        ctk.CTkLabel(self.output_select_row, text="Output").grid(
+            row=0, column=0, padx=(0, 6)
+        )
+        self.output_select_var = ctk.StringVar(value=_DEFAULT_OUTPUT_CHOICE)
+        ctk.CTkSegmentedButton(
+            self.output_select_row, values=list(_OUTPUT_CHOICES),
+            variable=self.output_select_var,
+        ).grid(row=0, column=1)
+
         self._on_preset_change(DEFAULT_PRESET)
 
     def _build_advanced(self) -> None:
@@ -539,6 +563,14 @@ class StemsApp(*_APP_BASES):
             self.mix_row.grid()
         else:
             self.mix_row.grid_remove()
+        # Output selector: only meaningful for a plain 2-stem (vocals +
+        # instrumental) preset. Reset it on hide so a stale "Vocals only"
+        # choice can't silently carry over to an unrelated preset's run.
+        if preset.output_stems == ["vocals", "instrumental"]:
+            self.output_select_row.grid()
+        else:
+            self.output_select_var.set(_DEFAULT_OUTPUT_CHOICE)
+            self.output_select_row.grid_remove()
 
     def _initial_dir(self, key: str, fallback: str | None = None) -> str | None:
         """Remembered dir for a dialog if it still exists, else fallback/None."""
@@ -911,6 +943,11 @@ class StemsApp(*_APP_BASES):
         # Selective output: checked stems are summed into one combined file.
         selected = [s for s, v in self.mix_vars.items() if v.get()]
         combine = selected if (preset and selected) else None
+        # Output selector: only forwarded for a plain 2-stem preset.
+        stems = None
+        preset_obj = PRESETS.get(preset) if preset else None
+        if preset_obj and preset_obj.output_stems == ["vocals", "instrumental"]:
+            stems = _OUTPUT_CHOICES.get(self.output_select_var.get())
 
         segment_text = self.segment_var.get().strip()
         try:
@@ -926,7 +963,7 @@ class StemsApp(*_APP_BASES):
             preset=preset,
             model=model,
             engine=None,
-            stems=None,
+            stems=stems,
             fmt=self.format_var.get(),
             bitdepth=int(self.bitdepth_var.get()),
             device=self.device_var.get(),
