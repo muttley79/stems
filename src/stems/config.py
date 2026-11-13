@@ -34,6 +34,8 @@ DEFAULT_UVR_OVERLAP: int = 4
 
 # Export defaults.
 DEFAULT_BITDEPTH = 24
+# Comma-separated output formats (any of flac, wav, mp3; see audio_io.parse_formats).
+DEFAULT_FORMAT = "mp3,flac"
 DEFAULT_MP3_BITRATE = "320k"
 
 

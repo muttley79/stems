@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from stems.config import (
-    DEFAULT_MP3_BITRATE, DEFAULT_OVERLAP, DEFAULT_SEGMENT, RunConfig,
+    DEFAULT_FORMAT, DEFAULT_MP3_BITRATE, DEFAULT_OVERLAP, DEFAULT_SEGMENT, RunConfig,
     resolve_device,
 )
 from stems.jobs import (
@@ -47,7 +47,7 @@ class JobParams:
     model: str | None = None
     engine: str | None = None
     stems: list[str] | None = None
-    fmt: str = "both"
+    fmt: str = DEFAULT_FORMAT
     bitdepth: int = 24
     device: str = "auto"
     segment: float | None = DEFAULT_SEGMENT
@@ -64,6 +64,8 @@ class JobParams:
     # Selective output: sum these stems into a single "a+b" file, writing only
     # the mix. None = export every stem separately (the default).
     combine: list[str] | None = None
+    # Write growing _in_progress_<stem>.wav files during the first UVR pass.
+    preview: bool = False
 
 
 @dataclass(slots=True)
@@ -187,6 +189,12 @@ def _process_one(
                     on_step=on_step, guitar_source=params.guitar_source,
                     vocal_method=params.vocal_method, combine=params.combine,
                     tail_rescue=params.tail_rescue,
+                    preview=params.preview,
+                    on_preview=lambda paths: events.put(Event("log", {
+                        "message": "Preview (updates every ~15 s): "
+                        + ", ".join(p.name for p in paths)
+                        + f"  in {out_dir}",
+                    })),
                 )
                 summary["done"] += 1
                 events.put(Event("file_done", {

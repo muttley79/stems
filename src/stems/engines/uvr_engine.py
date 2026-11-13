@@ -13,10 +13,12 @@ onnxruntime/torch is present; ``config.device == "cpu"`` forces CPU.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import logging
 import re
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -264,6 +266,162 @@ def ensure_no_normalize_patch() -> None:
     spec_utils.normalize = normalize
 
 
+# ----------------------------------------------------------------- previews
+# The pipeline installs a sink (stems.preview.PreviewWriter) for the duration of
+# a track; UvrSeparator.separate turns it into a _PreviewState for one pass, and
+# the patched MDXCSeparator methods feed that state. ContextVars keep this
+# per-thread, so a GUI worker thread never sees another run's sink.
+_preview_sink: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "stems_preview_sink", default=None
+)
+_active_preview: contextvars.ContextVar["_PreviewState | None"] = (
+    contextvars.ContextVar("stems_active_preview", default=None)
+)
+
+
+@contextlib.contextmanager
+def preview_sink(sink: Any):
+    """Route in-progress stems of UVR passes to ``sink`` while the block runs.
+
+    ``sink`` follows the :class:`stems.preview.PreviewWriter` protocol:
+    ``active``, ``due()``, ``update(stems, sr)``, ``pass_done()``.
+    """
+    token = _preview_sink.set(sink)
+    try:
+        yield sink
+    finally:
+        _preview_sink.reset(token)
+
+
+class _PreviewState:
+    """Tracks one demix pass and emits partial stems to the sink when due.
+
+    Mirrors the Roformer loop in ``MDXCSeparator.demix``: it accumulates its own
+    copy of the overlap-add weight counter from each ``overlap_add`` call (the
+    library's counter is a local we can't reach). Chunks start in increasing
+    order, so once a chunk starting at ``start`` has been added, every sample
+    before ``start`` is final - no later chunk touches it.
+    """
+
+    def __init__(self, sink: Any, aliases: dict[str, str]) -> None:
+        self.sink = sink
+        self.aliases = aliases
+        self.instance = None
+        self.mix: np.ndarray | None = None
+        self.counter = None
+        self.last_start = -1
+
+    def _canonical(self, name: str) -> str:
+        stem = _classify_stem(f"x_({name})")
+        return self.aliases.get(stem, stem)
+
+    def begin(self, instance, mix) -> None:
+        self.instance = instance
+        self.mix = np.asarray(mix, dtype=np.float32)
+        self.counter = None
+        self.last_start = -1
+
+    def chunk(self, result, weights, start: int, length: int) -> None:
+        import torch  # lazy; already loaded by audio-separator at this point
+
+        inst = self.instance
+        if inst is None or not getattr(inst, "is_roformer", False):
+            return
+        if getattr(inst, "pitch_shift", 0):
+            return  # partials would be pitch-shifted; the final dump handles it
+        if self.counter is None or self.counter.shape[0] != result.shape[-1]:
+            self.counter = torch.zeros(result.shape[-1], dtype=torch.float32)
+        safe_len = min(length, weights.shape[0], result.shape[-1] - start)
+        if safe_len > 0:
+            self.counter[start:start + safe_len] += weights[:safe_len]
+        if start <= self.last_start:
+            return  # the wrap-around final chunk; demix is about to finish
+        self.last_start = start
+        if start <= 0 or not self.sink.due():
+            return
+        try:
+            self.sink.update(self._partial(result, start), int(inst.sample_rate))
+        except Exception:
+            pass  # previews are best-effort; never break the separation
+
+    def _partial(self, result, pos: int) -> dict[str, np.ndarray]:
+        cfg = self.instance.model_data_cfgdict.training
+        est = (result[..., :pos] / self.counter[:pos].clamp(min=1e-10)).numpy()
+        instruments = list(cfg.instruments)
+        target = getattr(cfg, "target_instrument", None)
+        mix = self.mix[..., :pos]
+        out: dict[str, np.ndarray] = {}
+        if target:
+            out[self._canonical(target)] = est[0]
+            others = [i for i in instruments if i != target]
+            if len(others) == 1:  # 2-stem model: the residual is the other stem
+                out[self._canonical(others[0])] = mix - est[0]
+        else:
+            for name, row in zip(instruments, est):
+                out[self._canonical(name)] = row
+        return out
+
+    def finish(self, sources) -> None:
+        """Write the complete first-pass preview from demix's return value."""
+        if not isinstance(sources, dict) or self.instance is None:
+            return
+        stems = {self._canonical(k): v for k, v in sources.items()}
+        try:
+            self.sink.update(stems, int(self.instance.sample_rate))
+        except Exception:
+            pass
+
+
+def ensure_preview_patch() -> None:
+    """Expose ``MDXCSeparator``'s in-flight Roformer output for live previews.
+
+    ``demix`` builds the whole track in a local overlap-add buffer and returns
+    only at the end, so nothing is observable mid-pass. We wrap two methods,
+    both no-ops unless a :func:`preview_sink` pass is active on this thread:
+
+    - ``demix`` - records the instance + mix before, and hands the finished
+      sources to the sink after;
+    - ``overlap_add`` - called once per chunk with the running ``result``
+      buffer and the chunk's start, which is all we need to emit the finished
+      prefix.
+
+    Idempotent and lazy. Check after an ``audio-separator`` upgrade that
+    ``demix`` still calls ``self.overlap_add(result, x, window, start, length)``
+    in chunk order - if not, previews silently stop growing (only the final
+    full-length dump remains).
+    """
+    try:
+        from audio_separator.separator.architectures import mdxc_separator as mdxc
+    except Exception:
+        return
+    cls = mdxc.MDXCSeparator
+    if getattr(cls.demix, "_stems_preview_patch", False):
+        return
+
+    orig_demix = cls.demix
+    orig_overlap_add = cls.overlap_add
+
+    def demix(self, mix, *args, **kwargs):
+        state = _active_preview.get()
+        if state is None:
+            return orig_demix(self, mix, *args, **kwargs)
+        state.begin(self, mix)
+        sources = orig_demix(self, mix, *args, **kwargs)
+        state.finish(sources)
+        return sources
+
+    def overlap_add(self, result, x, weights, start, length):
+        result = orig_overlap_add(self, result, x, weights, start, length)
+        state = _active_preview.get()
+        if state is not None:
+            state.chunk(result, weights, int(start), int(length))
+        return result
+
+    demix._stems_preview_patch = True
+    cls.demix = demix
+    cls.overlap_add = overlap_add
+
+
 def apply_chunk_overlap(separator, config: RunConfig) -> None:
     """Give each Roformer model a real overlap-add step. Call after ``load_model``.
 
@@ -307,7 +465,13 @@ def apply_chunk_overlap(separator, config: RunConfig) -> None:
         return
 
     factor = max(2, min(wanted, config.uvr_overlap))
-    instance.overlap = chunk_seconds / factor
+    if hasattr(type(instance), "_roformer_chunk_starts"):
+        # audio-separator >= 0.47 treats the Roformer overlap as a divisor
+        # (``step = chunk_size // overlap``) and already defaults it to the
+        # model's ``num_overlap``; an int divisor is all it accepts.
+        instance.overlap = factor
+    else:
+        instance.overlap = chunk_seconds / factor
 
 
 def ensure_roformer_arch_detection_patch() -> None:
@@ -458,8 +622,19 @@ class UvrSeparator(BaseSeparator):
             # tqdm spam is silenced (our rich bar reports overall job progress).
             separator.load_model(model_filename=model_file)
             apply_chunk_overlap(separator, config)
-            with _quiet_separator():
-                produced = separator.separate(str(audio_path))
+            sink = _preview_sink.get()
+            state = None
+            if sink is not None and sink.active:
+                ensure_preview_patch()
+                state = _PreviewState(sink, _STEM_ALIASES.get(model, {}))
+            token = _active_preview.set(state)
+            try:
+                with _quiet_separator():
+                    produced = separator.separate(str(audio_path))
+            finally:
+                _active_preview.reset(token)
+                if state is not None:
+                    sink.pass_done()
 
             wanted = set(stems) if stems else None
             aliases = _STEM_ALIASES.get(model, {})

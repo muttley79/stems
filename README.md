@@ -8,7 +8,7 @@ formats) into stems at studio quality, using a multi-backend engine:
   **Mel-Band Roformer**, **MDX23C**, MDX-Net, VR-Arch - best-in-class
   vocals/instrumental isolation.
 
-Output is lossless **24-bit WAV** plus a **320 kbps MP3** copy of every stem.
+Output is lossless **24-bit FLAC** plus a **320 kbps MP3** copy of every stem; 24-bit WAV is an optional extra (`--format mp3,flac,wav`, or the **+ WAV** checkbox in the GUI).
 Single files and whole folders (recursive) are supported, with skip-existing for
 resumable batches.
 
@@ -205,9 +205,10 @@ Extras:
 | `--mix` | - | Combine the listed stems into **one** summed file (e.g. `vocals,drums` → `vocals+drums.wav`); only the mix is written. Mutually exclusive with `--stems`. |
 | `--vocal-method` | preset | Vocal-ensemble merge for `-max` presets: `max_spec` (fuller) or `average` (smoother). |
 | `--tail-rescue / --no-tail-rescue` | on | Refill model-gated vocal reverb/echo tails from the mix (`vocals-max` / `-max` cascades). Vocal models cut quiet decays they aren't sure about, causing volume hiccups; the rescue lifts them back (capped, quiet frames only) so tails decay smoothly without adding bleed. |
+| `--preview` | off | Write `_in_progress_<stem>.wav` in the output folder, growing from the start of the track during the first vocal/instrumental model pass (rewritten every ~15 s; reopen it in your player to hear the new part). It's one model only, so `-max` presets end up fuller. Deleted when the real stems land, kept if the run fails. Not available for Demucs-only presets. GUI: **Live preview** checkbox. |
 | `--guitar-source` | - | `6stem-max` only (**required**): guitar-model input - `instrumental`, `no-drums`, or `mix`. |
-| `-f, --format` | `both` | `wav`, `mp3`, or `both`. |
-| `--bitdepth` | `24` | WAV bit depth: `16`, `24`, or `32`. |
+| `-f, --format` | `mp3,flac` | Comma list of `flac`, `wav`, `mp3` (e.g. `mp3,flac,wav`). Legacy `both` = `wav,mp3`. |
+| `--bitdepth` | `24` | WAV/FLAC bit depth: `16`, `24`, or `32` (32 = float WAV; FLAC caps at 24). |
 | `--device` | `auto` | `auto`, `cuda`, or `cpu`. |
 | `-r, --recursive` | off | Recurse into subfolders for folder input. |
 | `--skip-existing` | off | Skip files whose output already exists. |
@@ -252,7 +253,7 @@ src/stems/
 ├── cli.py            # Typer CLI (separate / presets / models)
 ├── config.py         # device detection, cache paths, quality defaults
 ├── presets.py        # named plans → engine/model/strategy
-├── audio_io.py       # load + 24-bit WAV / 320k MP3 export
+├── audio_io.py       # load + FLAC / WAV / 320k MP3 export
 ├── engines/
 │   ├── base.py       # BaseSeparator interface + SeparationResult
 │   ├── demucs_engine.py

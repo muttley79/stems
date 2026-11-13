@@ -4,7 +4,7 @@ Resolves a single file or a (optionally recursive) folder into a list of input
 files, and runs the pipeline over them with progress reporting, skip-existing
 support, and a final summary. Output mirrors the input folder structure:
 
-    OUTPUT_DIR/<relative-subdir>/<track-name>/<stem>.{wav,mp3}
+    OUTPUT_DIR/<relative-subdir>/<track-name>/<stem>.{flac,wav,mp3}
 """
 
 from __future__ import annotations
@@ -19,7 +19,8 @@ from rich.progress import (
 )
 
 from stems.audio_io import SUPPORTED_INPUT_SUFFIXES
-from stems.config import RunConfig
+from stems.config import DEFAULT_FORMAT, RunConfig
+from stems.preview import is_preview_file
 from stems.pipeline import (
     Step, iter_required_models, prefetch_models, separate_file,
 )
@@ -65,7 +66,11 @@ def output_dir_for(
 def outputs_exist(out_dir: Path) -> bool:
     if not out_dir.is_dir():
         return False
-    return any(out_dir.glob("*.wav")) or any(out_dir.glob("*.mp3"))
+    return any(
+        not is_preview_file(p)
+        for ext in ("flac", "wav", "mp3")
+        for p in out_dir.glob(f"*.{ext}")
+    )
 
 
 def unique_output_dir(out_dir: Path) -> Path:
@@ -97,13 +102,14 @@ def run_batch(
     engine: str | None = None,
     model: str | None = None,
     stems: list[str] | None = None,
-    fmt: str = "both",
+    fmt: str = DEFAULT_FORMAT,
     recursive: bool = False,
     skip_existing: bool = False,
     guitar_source: str | None = None,
     vocal_method: str | None = None,
     combine: list[str] | None = None,
     tail_rescue: bool = True,
+    preview: bool = False,
 ) -> list[JobResult]:
     """Process all discovered inputs; returns one :class:`JobResult` per file."""
     input_path = Path(input_path)
@@ -168,6 +174,11 @@ def run_batch(
                     ),
                 )
 
+            def on_preview(paths: list[Path]) -> None:
+                progress.console.print(
+                    "[dim]preview:[/dim] " + ", ".join(str(p) for p in paths)
+                )
+
             try:
                 written = separate_file(
                     f, out_dir, config,
@@ -175,6 +186,7 @@ def run_batch(
                     stems=stems, fmt=fmt, on_step=on_step,
                     guitar_source=guitar_source, vocal_method=vocal_method,
                     combine=combine, tail_rescue=tail_rescue,
+                    preview=preview, on_preview=on_preview,
                 )
                 results.append(JobResult(f, out_dir, written=written))
                 progress.update(

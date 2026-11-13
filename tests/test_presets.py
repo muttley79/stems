@@ -33,8 +33,9 @@ def test_get_preset_unknown_raises():
         get_preset("does-not-exist")
 
 
-def test_cascade_preset_has_vocal_model():
+def test_cascade_preset_has_vocal_models():
+    """A cascade takes its vocals from the vocal ensemble, not the demucs pass."""
     p = get_preset("4stem-max")
     assert p.kind == "cascade"
-    assert p.vocal_engine == "uvr"
-    assert p.vocal_model
+    assert p.vocal_models
+    assert p.instrumental_models

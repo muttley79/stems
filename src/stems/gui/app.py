@@ -22,7 +22,7 @@ import customtkinter as ctk
 
 from stems import __version__
 from stems.audio_io import SUPPORTED_INPUT_SUFFIXES
-from stems.config import DEFAULT_OVERLAP, DEFAULT_SEGMENT
+from stems.config import DEFAULT_FORMAT, DEFAULT_OVERLAP, DEFAULT_SEGMENT
 from stems.gui.settings import load_settings, save_settings
 from stems.gui.worker import Event, JobParams, run_jobs
 from stems.pipeline import GUITAR_SOURCES
@@ -47,7 +47,6 @@ except Exception:  # pragma: no cover - optional dependency
     TkinterDnD = None
     _DND_AVAILABLE = False
 
-_FORMATS = ["both", "wav", "mp3"]
 _DEVICES = ["auto", "cuda", "cpu"]
 _BITDEPTHS = ["16", "24", "32"]
 # Vocal-ensemble merge for the "-max" presets (label shown → pipeline value).
@@ -234,10 +233,13 @@ class StemsApp(*_APP_BASES):
         opts = ctk.CTkFrame(frame, fg_color="transparent")
         opts.grid(row=3, column=0, columnspan=3, padx=12, pady=(4, 10), sticky="w")
 
-        ctk.CTkLabel(opts, text="Format").grid(row=0, column=0, padx=(0, 6))
-        self.format_var = ctk.StringVar(value="both")
-        ctk.CTkSegmentedButton(
-            opts, values=_FORMATS, variable=self.format_var
+        # MP3 + FLAC are always written; WAV is an opt-in extra.
+        ctk.CTkLabel(opts, text="Format: MP3 + FLAC").grid(
+            row=0, column=0, padx=(0, 8)
+        )
+        self.wav_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            opts, text="+ WAV", variable=self.wav_var, width=70
         ).grid(row=0, column=1, padx=(0, 16))
 
         ctk.CTkLabel(opts, text="Device").grid(row=0, column=2, padx=(0, 6))
@@ -246,7 +248,7 @@ class StemsApp(*_APP_BASES):
             opts, values=_DEVICES, variable=self.device_var, width=90
         ).grid(row=0, column=3, padx=(0, 16))
 
-        ctk.CTkLabel(opts, text="WAV bits").grid(row=0, column=4, padx=(0, 6))
+        ctk.CTkLabel(opts, text="Bit depth").grid(row=0, column=4, padx=(0, 6))
         self.bitdepth_var = ctk.StringVar(value="24")
         ctk.CTkOptionMenu(
             opts, values=_BITDEPTHS, variable=self.bitdepth_var, width=70
@@ -258,6 +260,13 @@ class StemsApp(*_APP_BASES):
         ctk.CTkCheckBox(
             flags, text="Recurse into subfolders", variable=self.recursive_var
         ).grid(row=0, column=0, padx=(0, 20))
+        # Live preview: _in_progress_<stem>.wav grows in the output folder during
+        # the first vocal/instrumental model pass (one model, not the ensemble).
+        self.preview_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            flags, text="Live preview (_in_progress_*.wav)",
+            variable=self.preview_var,
+        ).grid(row=0, column=1, padx=(0, 20))
         # No "skip existing" control: every run writes a fresh numbered folder
         # (NN_<track>/), so there is never a pre-existing output to skip.
 
@@ -679,6 +688,12 @@ class StemsApp(*_APP_BASES):
             # Non-server: hand the new job to the live worker queue immediately.
             self._job_q.put((job.id, job.params))
 
+        # Auto-start: if nothing is running and this is the only pending job,
+        # kick off the run straight away instead of waiting for Run.
+        pending = [j for j in self._queue if j.status == "queued"]
+        if not self._running and pending == [job]:
+            self._start_queue_run(pending)
+
         self._update_run_button()
         return True
 
@@ -964,7 +979,7 @@ class StemsApp(*_APP_BASES):
             model=model,
             engine=None,
             stems=stems,
-            fmt=self.format_var.get(),
+            fmt=DEFAULT_FORMAT + (",wav" if self.wav_var.get() else ""),
             bitdepth=int(self.bitdepth_var.get()),
             device=self.device_var.get(),
             segment=segment,
@@ -975,6 +990,7 @@ class StemsApp(*_APP_BASES):
             vocal_method=vocal_method,
             combine=combine,
             tail_rescue=bool(self.tail_rescue_var.get()),
+            preview=bool(self.preview_var.get()),
         )
 
     # -------------------------------------------------------------- event pump

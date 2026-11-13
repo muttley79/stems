@@ -121,21 +121,17 @@ a.dl-btn:hover{filter:brightness(1.08)}
           <select id="o-preset" style="width:100%;max-width:400px"></select>
           <span id="preset-desc" style="display:block;margin-top:4px;font-size:.78em;color:var(--muted)"></span>
         </label>
-        <label>Format<select id="o-fmt">
-          <option value="both">WAV + MP3</option>
-          <option value="wav">WAV only</option>
-          <option value="mp3">MP3 only</option>
-        </select></label>
         <label>Device<select id="o-dev">
           <option value="auto">Auto</option>
           <option value="cuda">CUDA (GPU)</option>
           <option value="cpu">CPU</option>
         </select></label>
-        <label>WAV bits<select id="o-bits">
+        <label>Bit depth<select id="o-bits">
           <option value="24">24-bit</option>
           <option value="16">16-bit</option>
           <option value="32">32-bit</option>
         </select></label>
+        <label class="chk" title="MP3 + FLAC are always written"><input type="checkbox" id="o-wav"> Also WAV</label>
         <label class="chk"><input type="checkbox" id="o-tail" checked> Tail rescue</label>
       </div>
       <div class="row-btn">
@@ -193,7 +189,7 @@ document.getElementById('jform').addEventListener('submit',async e=>{
   const fd=new FormData();
   fd.append('file',chosenFile);
   fd.append('preset',document.getElementById('o-preset').value);
-  fd.append('format',document.getElementById('o-fmt').value);
+  fd.append('format',document.getElementById('o-wav').checked?'mp3,flac,wav':'mp3,flac');
   fd.append('bitdepth',document.getElementById('o-bits').value);
   fd.append('device',document.getElementById('o-dev').value);
   fd.append('tail_rescue',document.getElementById('o-tail').checked?'true':'false');
@@ -292,6 +288,7 @@ def _make_app(registry: "JobRegistry"):
         ) from exc
 
     from stems.gui.worker import JobParams  # imported once at app-creation time
+    from stems.config import DEFAULT_FORMAT
     from stems.presets import PRESETS
 
     app = FastAPI(title="Stems", docs_url=None, redoc_url=None)
@@ -339,7 +336,7 @@ def _make_app(registry: "JobRegistry"):
         file: UploadFile = File(...),
         preset: str = Form(None),
         model: str = Form(None),
-        format: str = Form("both"),
+        format: str = Form(DEFAULT_FORMAT),
         bitdepth: str = Form("24"),
         device: str = Form("auto"),
         tail_rescue: str = Form("true"),

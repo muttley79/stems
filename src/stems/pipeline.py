@@ -15,12 +15,13 @@ from typing import Callable
 import numpy as np
 
 from stems.audio_io import export_stem, load_audio, write_wav
-from stems.config import RunConfig
+from stems.config import DEFAULT_FORMAT, RunConfig
 from stems.engines.base import BaseSeparator, SeparationResult
 from stems.engines.demucs_engine import DemucsSeparator
-from stems.engines.uvr_engine import UvrSeparator
+from stems.engines.uvr_engine import UvrSeparator, preview_sink
 from stems.ensemble import ensemble_results, rescue_vocal_tails, sum_stems
 from stems.presets import Preset, get_preset
+from stems.preview import PreviewWriter
 
 # Engines are cheap to construct (heavy work is lazy in .separate).
 _ENGINES: dict[str, BaseSeparator] = {
@@ -359,23 +360,48 @@ def separate_file(
     engine: str | None = None,
     model: str | None = None,
     stems: list[str] | None = None,
-    fmt: str = "both",
+    fmt: str = DEFAULT_FORMAT,
     on_step: StepCallback | None = None,
     guitar_source: str | None = None,
     vocal_method: str | None = None,
     combine: list[str] | None = None,
     tail_rescue: bool = True,
+    preview: bool = False,
+    on_preview: Callable[[list[Path]], None] | None = None,
 ) -> list[Path]:
     """Separate ``audio_path`` and write stems into ``out_dir``. Returns paths.
 
     ``combine`` sums the listed stems into a single file (named by joining them
     with ``+``, e.g. ``vocals+drums``) and writes *only* that mix. Only the
     listed stems are computed. ``None`` keeps the default per-stem export.
+
+    ``preview`` writes ``_in_progress_<stem>.wav`` files during the first UVR
+    pass (see :mod:`stems.preview`), deleted once the real stems are written and
+    left in place if the run fails. ``on_preview`` is told the paths the first
+    time they appear.
     """
-    result = separate_to_result(
-        audio_path, config, preset, engine, model, combine or stems, on_step,
-        guitar_source, vocal_method, tail_rescue,
-    )
+    if not preview:
+        result = separate_to_result(
+            audio_path, config, preset, engine, model, combine or stems, on_step,
+            guitar_source, vocal_method, tail_rescue,
+        )
+        return _export(result, out_dir, config, fmt, combine)
+
+    writer = PreviewWriter(out_dir, on_first_write=on_preview)
+    with preview_sink(writer):
+        result = separate_to_result(
+            audio_path, config, preset, engine, model, combine or stems, on_step,
+            guitar_source, vocal_method, tail_rescue,
+        )
+    written = _export(result, out_dir, config, fmt, combine)
+    writer.cleanup()
+    return written
+
+
+def _export(
+    result: SeparationResult, out_dir: Path, config: RunConfig, fmt: str,
+    combine: list[str] | None,
+) -> list[Path]:
     if combine:
         present = [n for n in combine if n in result.stems]
         if not present:

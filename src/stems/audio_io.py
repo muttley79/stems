@@ -6,8 +6,8 @@ Conventions used throughout the codebase:
 
 Loading prefers ``soundfile`` (libsndfile) and falls back to decoding via the
 system ``ffmpeg`` binary for formats libsndfile can't read (e.g. some MP3/M4A).
-Export writes lossless 24-bit (or 16-bit) WAV via ``soundfile`` and, optionally,
-a 320 kbps MP3 via ``ffmpeg``. Loudness is never altered, so summing all stems
+Export writes lossless FLAC and/or WAV (24-bit by default) via ``soundfile`` and
+a 320 kbps MP3 via ``ffmpeg``; the default set is MP3 + FLAC. Loudness is never altered, so summing all stems
 reconstructs (approximately) the original mix.
 """
 
@@ -19,9 +19,12 @@ import subprocess
 import tempfile
 import warnings
 from pathlib import Path
+from typing import Iterable
 
 import numpy as np
 import soundfile as sf
+
+from stems.config import DEFAULT_FORMAT
 
 SUPPORTED_INPUT_SUFFIXES = {
     ".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".aiff", ".aif",
@@ -112,6 +115,22 @@ def _probe_sample_rate(path: Path) -> int | None:
         return None
 
 
+def _warn_if_clipping(path: Path, audio: np.ndarray, bitdepth: int) -> None:
+    peak = float(np.abs(audio).max()) if audio.size else 0.0
+    if peak > 1.0:
+        hint = (
+            "use --bitdepth 32 with WAV to keep it intact"
+            if path.suffix.lower() == ".wav"
+            else "write WAV with --bitdepth 32 to keep it intact"
+        )
+        warnings.warn(
+            f"{path.name} peaks at {20 * np.log10(peak):+.2f} dBFS and will clip "
+            f"at {bitdepth}-bit; {hint}.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
 def write_wav(path: Path, audio: np.ndarray, sr: int, bitdepth: int = 24) -> Path:
     """Write float32 ``(channels, samples)`` audio to a PCM WAV.
 
@@ -124,16 +143,26 @@ def write_wav(path: Path, audio: np.ndarray, sr: int, bitdepth: int = 24) -> Pat
     path.parent.mkdir(parents=True, exist_ok=True)
     subtype = {16: "PCM_16", 24: "PCM_24", 32: "FLOAT"}.get(bitdepth, "PCM_24")
     if subtype != "FLOAT":
-        peak = float(np.abs(audio).max()) if audio.size else 0.0
-        if peak > 1.0:
-            warnings.warn(
-                f"{path.name} peaks at {20 * np.log10(peak):+.2f} dBFS and will clip "
-                f"at {bitdepth}-bit; use --bitdepth 32 to keep it intact.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        _warn_if_clipping(path, audio, bitdepth)
     # soundfile expects (samples, channels).
     sf.write(str(path), np.ascontiguousarray(audio.T), sr, subtype=subtype)
+    return path
+
+
+def write_flac(path: Path, audio: np.ndarray, sr: int, bitdepth: int = 24) -> Path:
+    """Write float32 ``(channels, samples)`` audio to a lossless FLAC.
+
+    FLAC is integer-only, so ``bitdepth`` is capped at 24 (32 -> 24); peaks above
+    full scale clip, and :func:`write_wav` at 32-bit is the way to keep them.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    bits = 16 if bitdepth == 16 else 24
+    _warn_if_clipping(path, audio, bits)
+    sf.write(
+        str(path), np.ascontiguousarray(audio.T), sr,
+        format="FLAC", subtype=f"PCM_{bits}",
+    )
     return path
 
 
@@ -160,20 +189,52 @@ def write_mp3(path: Path, audio: np.ndarray, sr: int, bitrate: str = "320k") -> 
     return path
 
 
+# Output formats, in write order. ``--format`` takes a comma-separated subset
+# (e.g. ``mp3,flac,wav``); these legacy single-word values are still accepted.
+OUTPUT_FORMATS = ("flac", "wav", "mp3")
+_FORMAT_ALIASES = {"both": ("wav", "mp3"), "all": OUTPUT_FORMATS}
+
+
+def parse_formats(fmt: str | Iterable[str]) -> tuple[str, ...]:
+    """Normalise a format spec (``"mp3,flac"``, ``"both"``, ``["wav"]``) to a
+    de-duplicated tuple in :data:`OUTPUT_FORMATS` order. Raises ``ValueError``
+    on an empty spec or an unknown format."""
+    parts = fmt.split(",") if isinstance(fmt, str) else list(fmt)
+    wanted: set[str] = set()
+    for part in parts:
+        part = part.strip().lower()
+        if not part:
+            continue
+        if part in _FORMAT_ALIASES:
+            wanted.update(_FORMAT_ALIASES[part])
+        elif part in OUTPUT_FORMATS:
+            wanted.add(part)
+        else:
+            raise ValueError(
+                f"unknown output format {part!r} (choose from {', '.join(OUTPUT_FORMATS)})"
+            )
+    if not wanted:
+        raise ValueError("no output format given")
+    return tuple(f for f in OUTPUT_FORMATS if f in wanted)
+
+
 def export_stem(
     out_dir: Path,
     stem_name: str,
     audio: np.ndarray,
     sr: int,
-    fmt: str = "both",
+    fmt: str | Iterable[str] = DEFAULT_FORMAT,
     bitdepth: int = 24,
     mp3_bitrate: str = "320k",
 ) -> list[Path]:
     """Write a single stem in the requested format(s). Returns written paths."""
     out_dir = Path(out_dir)
     written: list[Path] = []
-    if fmt in ("wav", "both"):
-        written.append(write_wav(out_dir / f"{stem_name}.wav", audio, sr, bitdepth))
-    if fmt in ("mp3", "both"):
-        written.append(write_mp3(out_dir / f"{stem_name}.mp3", audio, sr, mp3_bitrate))
+    for f in parse_formats(fmt):
+        if f == "flac":
+            written.append(write_flac(out_dir / f"{stem_name}.flac", audio, sr, bitdepth))
+        elif f == "wav":
+            written.append(write_wav(out_dir / f"{stem_name}.wav", audio, sr, bitdepth))
+        elif f == "mp3":
+            written.append(write_mp3(out_dir / f"{stem_name}.mp3", audio, sr, mp3_bitrate))
     return written

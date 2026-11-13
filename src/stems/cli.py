@@ -31,8 +31,9 @@ for _stream in (sys.stdout, sys.stderr):
             pass
 
 from stems import __version__
+from stems.audio_io import parse_formats
 from stems.config import (
-    DEFAULT_BITDEPTH, DEFAULT_MP3_BITRATE, DEFAULT_OVERLAP, DEFAULT_SEGMENT,
+    DEFAULT_BITDEPTH, DEFAULT_FORMAT, DEFAULT_MP3_BITRATE, DEFAULT_OVERLAP, DEFAULT_SEGMENT,
     DEFAULT_SHIFTS, DEFAULT_UVR_OVERLAP, RunConfig, resolve_device,
 )
 from stems.engines.demucs_engine import _MODEL_STEMS as DEMUCS_MODELS
@@ -107,6 +108,15 @@ def separate(
             "decays. On by default."
         ),
     ),
+    preview: bool = typer.Option(
+        False, "--preview",
+        help=(
+            "Write _in_progress_<stem>.wav files that grow during the first "
+            "vocal/instrumental model pass (rewritten every ~15 s) so you can "
+            "listen early. One model only - the final ensemble sounds fuller. "
+            "Deleted when the real stems are written."
+        ),
+    ),
     guitar_source: Optional[str] = typer.Option(
         None, "--guitar-source",
         help=(
@@ -116,10 +126,12 @@ def separate(
         ),
     ),
     fmt: str = typer.Option(
-        "both", "--format", "-f", help="Output format: wav | mp3 | both."
+        DEFAULT_FORMAT, "--format", "-f",
+        help="Output formats, comma-separated: flac, wav, mp3 (e.g. mp3,flac,wav).",
     ),
     bitdepth: int = typer.Option(
-        DEFAULT_BITDEPTH, "--bitdepth", help="WAV bit depth: 16 | 24 | 32."
+        DEFAULT_BITDEPTH, "--bitdepth",
+        help="WAV/FLAC bit depth: 16 | 24 | 32 (32 = float WAV; FLAC caps at 24).",
     ),
     device: str = typer.Option(
         "auto", "--device", help="Compute device: auto | cuda | cpu."
@@ -151,8 +163,10 @@ def separate(
     ),
 ) -> None:
     """Separate INPUT into stems written under OUTPUT_DIR."""
-    if fmt not in ("wav", "mp3", "both"):
-        raise typer.BadParameter("--format must be wav, mp3, or both")
+    try:
+        fmt = ",".join(parse_formats(fmt))
+    except ValueError as exc:
+        raise typer.BadParameter(f"--format: {exc}") from exc
     if vocal_method is not None and vocal_method not in ("max_spec", "average"):
         raise typer.BadParameter("--vocal-method must be max_spec or average")
     if model is None and preset is None:
@@ -225,6 +239,7 @@ def separate(
         vocal_method=vocal_method,
         combine=mix_list,
         tail_rescue=tail_rescue,
+        preview=preview,
     )
 
 

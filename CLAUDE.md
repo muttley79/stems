@@ -11,7 +11,8 @@ that fronts two separation backends:
 - **Demucs v4** (`demucs.api.Separator`) - 4/6-stem.
 - **`audio-separator`** (UVR/Roformer model zoo) - best vocals/instrumental.
 
-Output is lossless 24-bit WAV + 320 kbps MP3. Single files and recursive folder
+Output is lossless 24-bit FLAC + 320 kbps MP3 by default; WAV is opt-in
+(`--format mp3,flac,wav`). Single files and recursive folder
 batches are supported.
 
 ## Environment
@@ -41,6 +42,7 @@ src/stems/
 │   └── uvr_engine.py     # UvrSeparator (+ MODEL_FILES alias table)
 ├── ensemble.py        # ensemble_results(): average / max_spec merge; rescue_vocal_tails()
 ├── pipeline.py        # separate_to_result()/separate_file(): the orchestrator
+├── preview.py         # PreviewWriter: live _in_progress_<stem>.wav during the 1st UVR pass
 ├── jobs.py            # discover_inputs(), run_batch(): batch + progress + summary
 └── gui/               # optional CustomTkinter desktop front-end (gui extra)
     ├── __init__.py    # main(): console-suppress + single-instance, launches window
@@ -129,9 +131,10 @@ audio convention and avoid introducing normalization.
   `_STEM_TAGS` (exact tags) or `_STEM_KEYWORDS`; use `_STEM_ALIASES` when a
   model's tags lie about the content (karaoke models tag lead/backing vocals as
   Vocals/Instrumental).
-- `uvr_engine` monkeypatches `audio-separator` in four places, all lazy and
+- `uvr_engine` monkeypatches `audio-separator` in five places, all lazy and
   idempotent (`ensure_*_patch`): Roformer `mlp_expansion_factor`, architecture
-  detection from nested configs, float32 WAV output, and the normalization no-op.
+  detection from nested configs, float32 WAV output, the normalization no-op, and
+  the live-preview hooks on `MDXCSeparator.demix`/`overlap_add` (`--preview`).
   Each docstring records the upstream behavior it works around - check whether
   the patch is still needed after an `audio-separator` upgrade.
 - **`mdxc_params["overlap"]` means different things per architecture**: a divisor
